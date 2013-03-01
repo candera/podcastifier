@@ -1,0 +1,7 @@
+#!/bin/bash
+
+cd `dirname $0`/..
+
+lein clean
+lein uberjar
+launch4jc l4j.xml
