@@ -76,40 +76,75 @@
        (interpose " ")
        (apply str)))
 
-(defn pan
-  [config input]
-  (if (-> config :voices :pan?)
-    (let [output (new-file)]
-      {:commands [(sox input output "remix" "-p" "1,2v0.6" "1v0.6,2")]
-       :output   output})
-    {:output input}))
+;; Processing steps
 
-(defn trim-voices
-  [config input]
-  (let [output (new-file)
-        trim1 ()]
-   {:commands [(sox input output )]
-    :output output}))
-
-(defn fade-in-voices
-  [config input]
-  {:commands ["# TODO: fade in"]
+(defn no-op
+  [input]
+  {:commands []
    :output input})
 
+(defn pan
+  [input]
+  (let [output (new-file)]
+    {:commands [(sox input output "remix" "-p" "1,2v0.6" "1v0.6,2")]
+     :output   output}))
+
+(defn trim-voices
+  [input start end fade-up]
+  (let [output (new-file)
+        trim1 (-> start normalize-time (subtract-time fade-up) time->str)
+        trim2 (-> end time->str)]
+    {:commands [(sox input output "trim" (str "=" trim1) (str "=" trim2))]
+     :output output}))
+
+(defn fade-in
+  [input duration]
+  (let [output (new-file)]
+   {:commands [(sox input output "fade" "l" duration)]
+    :output output}))
+
+(defn fade-down
+  "Fades the input from full volume down to `amount` over `duration`
+  beginning at `start`." 
+  [input start duration amount]
+  (let [output (new-file)]
+    (throw (ex-info "Not yet implemented" {:reason :not-yet-implemented}))))
+
+(defn fade-out
+  "Fades the input to zero for the last `duration`."
+  [input duration]
+  (throw (ex-info "Not yet implemented" {:reason :not-yet-implemented})))
+
 (defn apply-step
-  [config state step]
-  (let [{:keys [commands output]} (step config (:output state))]
+  [state step]
+  (let [{:keys [commands output]} (step (:output state))]
     (-> state
         (update-in [:commands] into commands)
         (assoc :output output))))
 
+(defn apply-chain
+  [input steps]
+  (reduce apply-step {:commands [] :output input} steps)) 
+
 (defn commands
   [config]
-  (:commands (reduce #(apply-step config %1 %2) 
-                     {:commands []} 
-                     [pan 
-                      trim-voices
-                      fade-in-voices])))
+  (let [voice (apply-chain (-> config :voices :both)
+                           [(if (-> config :voices :pan?) pan no-op)
+                            #(trim-voices % 
+                                          (-> config :voices :start)
+                                          (-> config :voices :end)
+                                          (-> config :voices :fade-in))
+                            #(fade-in %
+                                      (-> config :voices :fade-in))])
+        intro (apply-chain (-> config :music :intro)
+                           [#(fade-down %
+                                        (-> config :music :intro :full-volume-length)
+                                        (-> config :voices :fade-in)
+                                        (-> config :music :intro :fade-amount))
+                            #(fade-out %
+                                       (-> config :music :intro :fade-out))])]
+    
+    (:commands voice)))
 
 (defn -main
   "Entry point for the application"

@@ -1,10 +1,14 @@
 {:voices {:both "voices.wav"
           :pan? true
-          :start "00:01:15"
-          :intro-music-fade "00:02:15"
-          :end "00:05:23"}
+          :start "00:01:20"
+          :fade-in "00:00:15"
+          :intro-music-fade "00:02:25"
+          :end "00:03:30"}
  :bumper "bumper.wav"
- :music {:intro "intro.mp3"
+ :music {:intro {:file "intro.mp3"
+                 :full-volume-length "00:00:30"
+                 :fade-amount 20 ;; dB
+                 :fade-out "00:00:15"}
          :outro "outro.mp3"
          :bumper  "bumper-music.mp3"}
  :bloops {:bumper "/path/to/keypickup.wav"
