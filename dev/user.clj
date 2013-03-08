@@ -26,10 +26,6 @@
   []
   (-> "example-config.edn" io/reader java.io.PushbackReader. edn/read))
 
-(defn commands
-  []
-  (main/commands (-> "example-config.edn" io/reader java.io.PushbackReader. edn/read)))
-
 (defn main
   []
   (main/-main "example-config.edn"))

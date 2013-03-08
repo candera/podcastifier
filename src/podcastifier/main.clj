@@ -167,7 +167,7 @@
 (defn sh
   "Invokes the specified command with `args`"
   [command & args]
-  (let [{:keys [exit out err]} (apply sh/sh command args)]
+  (let [{:keys [exit out err]} (apply sh/sh command (map str args))]
     (when-not (zero? exit)
       (throw (ex-info (str "Invocation of " command " failed")
                       {:reason :command-invocation-failure
@@ -210,44 +210,135 @@
     (sox input output "fade" "l" 0 0 duration)))
 
 (defn to-wav
-  "Converts input to a wav file"
-  [input]
+  "Converts input to a wav file at sample rate `rate`"
+  [input rate]
   (let [output (new-file)]
     ;; TODO: I should think it would be obvious what needs to be done here
-    (sh "c:/bin/ffmpeg-git-01fcbdf-win32-static/bin/ffmpeg.exe" 
+    (sh "c:/bin/ffmpeg-git-01fcbdf-win32-static/bin/ffmpeg.exe"
         "-y"                            ; Overwrite output file
         "-i" input
+        "-ar" rate                      ; Convert to target sample rate
         output)
     output))
 
-(defn commands
-  [config]
-  (let [pan-f (if (-> config :voices :pan?) pan identity)
-        voice (-> config :voices :both
-                  pan-f
-                  (trim 
-                   (-> config :voices :start)
-                   (-> config :voices :end)
-                   (-> config :voices :fade-in))
-                  (fade-in
-                   (-> config :voices :fade-in)))
-        music-soft-start (add-time (-> config :music :intro :full-volume-length)
-                                   (-> config :voices :fade-in))
-        music-soft-end (add-time music-soft-start
-                                 (subtract-time (-> config :voices :intro-music-fade)
-                                                (-> config :voices :start)))
-        intro (-> config :music :intro :file
-                  to-wav
-                  (fade
-                   [[1.0 (-> config :music :intro :full-volume-length)]
-                    [(-> config :music :intro :fade-amount) music-soft-start]
-                    [(-> config :music :intro :fade-amount) music-soft-end]
-                    [0 (add-time music-soft-end (-> config :music :intro :fade-out))]]))]
-    {:intro intro
-     :voices voice}))
+(defn mix
+  "Mixes files `input1` and `input2` together, delaying `input2` by
+  `offset`."
+  [input1 input2 offset]
+  (let [delayed (new-file)
+        output (new-file)]
+    (sox input2 delayed "pad" (time->str offset))
+    (sox "-m" input1 delayed output
+         ;; Normalize to -3db
+         "gain" "-n" "-3")
+    output))
+
+(defn rate
+  "Return the sample rate of the input in samples-per-second."
+  [input]
+  (let [input-wav (-> input io/file WavFile/openWavFile)
+        sample-rate (.getSampleRate input-wav)]
+    (.close input-wav)
+    sample-rate))
+
+(defn match-sample-rate
+  "Converts the input to a file with the same sample rate as `match`"
+  [input match]
+  (let [output (new-file)
+        rate (rate match)]
+    (sox input output "rate" "-v" rate)
+    output))
+
+(defn append
+  "Concatenates files together."
+  [& inputs]
+  (let [output (new-file)]
+    (apply sox "--combine" "sequence" (conj (vec inputs) output))
+    output))
+
+(defn silence
+  "Creates a file with nothing silence of `length`. Channels and
+  sample length are taken from `input`."
+  [input length]
+  (let [output (new-file)
+        input-wav (-> input io/file WavFile/openWavFile)
+        sample-rate (.getSampleRate input-wav)
+        channels (.getNumChannels input-wav)
+        frame-count (Math/floor (* length sample-rate))
+        output-wav (WavFile/newWavFile (io/file output)
+                                       channels
+                                       frame-count
+                                       (.getValidBits input-wav)
+                                       sample-rate)
+        buffer-frames 100
+        buffer (double-array (* buffer-frames channels) 0)]
+    (loop [frames-remaining frame-count]
+      (when (pos? frames-remaining)
+        (let [frames-to-write (min frames-remaining buffer-frames)]
+          (.writeFrames output-wav buffer frames-to-write)
+          (recur (- frames-remaining frames-to-write)))))
+    output))
 
 (defn -main
   "Entry point for the application"
   [config-path]
   (let [config (-> config-path io/reader (java.io.PushbackReader.) edn/read)]
-    (println (commands config))))
+    (let [pan-f (if (-> config :voices :pan?) pan identity)
+          voice (-> config :voices :both
+                    pan-f
+                    (trim
+                     (-> config :voices :start)
+                     (-> config :voices :end)
+                     (-> config :voices :fade-in))
+                    (fade-in
+                     (-> config :voices :fade-in)))
+          voice-rate (rate voice)
+          intro-soft-start (add-time (-> config :music :intro :full-volume-length)
+                                     (-> config :voices :fade-in))
+          intro-soft-end (add-time intro-soft-start
+                                   (subtract-time (-> config :voices :intro-music-fade)
+                                                  (-> config :voices :start)))
+          intro-end (add-time intro-soft-end (-> config :music :intro :fade-out))
+          intro (-> config :music :intro :file
+                    (to-wav voice-rate)
+                    (fade
+                     [[1.0 (-> config :music :intro :full-volume-length)]
+                      [(-> config :music :intro :fade-amount) intro-soft-start]
+                      [(-> config :music :intro :fade-amount) intro-soft-end]
+                      [0.0 intro-end]])
+                    (trim 0.0 intro-end 0.0))
+          outro-fade-up-start (subtract-time (-> config :voices :end)
+                                             (-> config :voices :outro-music-start))
+          outro-fade-up-end (add-time outro-fade-up-start
+                                      (-> config :music :outro :fade-up))
+          outro-fade-out-start (add-time outro-fade-up-end
+                                         (-> config :music :outro :full-volume-length))
+          outro-fade-out-end (add-time outro-fade-out-start
+                                       (-> config :music :outro :fade-out))
+          outro (-> config :music :outro :file
+                    (to-wav voice-rate)
+                    (fade
+                     [[(-> config :music :outro :fade-amount) 0]
+                      [(-> config :music :outro :fade-amount) outro-fade-up-start]
+                      [1.0 outro-fade-up-end]
+                      [1.0 outro-fade-out-start]
+                      [0.0 outro-fade-out-end]])
+                    (match-sample-rate voice)
+                    (trim 0.0 outro-fade-out-end 0.0))
+          outro-music-start (-> (-> config :voices :outro-music-start)
+                                (subtract-time (-> config :voices :start))
+                                (add-time (-> config :voices :fade-in)))
+          with-outro (mix voice outro outro-music-start)
+          with-intro (mix intro with-outro (-> config :music :intro :full-volume-length))
+          with-bloops (append (-> config :bloops :bumper)
+                              (silence voice 3)
+                              with-intro
+                              (silence voice 2)
+                              (-> config :bloops :end))]
+      {:intro intro
+       :voices voice
+       :outro outro
+       :with-outro with-outro
+       :with-intro with-intro
+       :outro-times [outro-fade-up-start outro-fade-up-end outro-fade-out-start outro-fade-out-end]
+       :with-bloops with-bloops})))
