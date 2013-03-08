@@ -3,13 +3,17 @@
           :start "00:01:20"
           :fade-in "00:00:15"
           :intro-music-fade "00:02:25"
-          :end "00:03:30"}
+          :outro-music-start "05:00"
+          :end "00:05:30"}
  :bumper "bumper.wav"
  :music {:intro {:file "intro.mp3"
                  :full-volume-length "00:00:30"
-                 :fade-amount 20 ;; dB
+                 :fade-amount 0.1
                  :fade-out "00:00:15"}
-         :outro "outro.mp3"
+         {:outro {:file "outro.mp3"
+                  :fade-amount 0.1
+                  :fade-up "00:00:02"
+                  :full-volume-length "00:00:30"}}
          :bumper  "bumper-music.mp3"}
  :bloops {:bumper "/path/to/keypickup.wav"
           :end "/path/to/exit.wav"}}

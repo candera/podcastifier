@@ -22,6 +22,10 @@
   (stop)
   (refresh :after 'user/init))
 
+(defn config
+  []
+  (-> "example-config.edn" io/reader java.io.PushbackReader. edn/read))
+
 (defn commands
   []
   (main/commands (-> "example-config.edn" io/reader java.io.PushbackReader. edn/read)))

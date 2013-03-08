@@ -3,6 +3,7 @@
   (:refer-clojure :exclude [println])
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.java.shell :as sh]
             [clojure.string :as str])
   (:import [WavFile WavFile]))
 
@@ -92,7 +93,7 @@
                 delta-t (- (double end-t) start-t)
                 v       (+ start-v
                            (* delta-v (/ (- (double t) start-t) delta-t)))]
-            (* v v)))))))
+            v))))))
 
 (defn fade
   "Writes audio file to path `output` by adjusting the gain in `input`
@@ -117,8 +118,9 @@
   would start at full volume, fade down to 20% volume at 12 seconds,
   stay there until 90 seconds in, and then fade out completely by 15
   seconds later."
-  [input output controls]
-  (let [input-file (io/file input)
+  [input controls]
+  (let [output (new-file)
+        input-file (io/file input)
         input-wav (WavFile/openWavFile input-file)
         channels (.getNumChannels input-wav)
         sample-rate (.getSampleRate input-wav)
@@ -149,7 +151,8 @@
          (.writeFrames output-wav output-buffer frames-read)
          (recur (+ frame-count frames-read)))))
     (.close input-wav)
-    (.close output-wav)))
+    (.close output-wav)
+    output))
 
 (defn add-time
   "Adds time `t1` to `t2`"
@@ -161,95 +164,90 @@
   [t1 t2]
   (- (normalize-time t1) (normalize-time t2)))
 
+(defn sh
+  "Invokes the specified command with `args`"
+  [command & args]
+  (let [{:keys [exit out err]} (apply sh/sh command args)]
+    (when-not (zero? exit)
+      (throw (ex-info (str "Invocation of " command " failed")
+                      {:reason :command-invocation-failure
+                       :args args
+                       :command command
+                       :exit exit
+                       :out out
+                       :err err})))))
 (defn sox
   "Returns an invocation of sox with the specified arguments"
   [& args]
-  (->> args
-       (concat ["sox"])
-       (interpose " ")
-       (apply str)))
+  (apply sh "sox" args))
 
 ;; Processing steps
-
-(defn no-op
-  [input]
-  {:commands []
-   :output input})
 
 (defn pan
   [input]
   (let [output (new-file)]
-    {:commands [(sox input output "remix" "-p" "1,2v0.6" "1v0.6,2")]
-     :output   output}))
+    (sox input output "remix" "-p" "1,2v0.6" "1v0.6,2")
+    output))
 
-(defn trim-voices
+(defn trim
   [input start end fade-up]
   (let [output (new-file)
         trim1 (-> start normalize-time (subtract-time fade-up) time->str)
         trim2 (-> end time->str)]
-    {:commands [(sox input output "trim" (str "=" trim1) (str "=" trim2))]
-     :output output}))
+    (sox input output "trim" (str "=" trim1) (str "=" trim2))
+    output))
 
 (defn fade-in
   [input duration]
   (let [output (new-file)]
-   {:commands [(sox input output "fade" "l" duration)]
-    :output output}))
-
-(defn fade-down
-  "Fades the input from full volume down to `amount` over `duration`
-  beginning at `start`."
-  [input start duration amount]
-  (let [beginning (new-file)
-        middle (new-file)
-        end (new-file)
-        output (new-file)]
-    {:commands [(sox input beginning "trim" 0 start)
-                (sox input middle "trim" start duration)
-                (sox input end "trim" (add-time start duration) "-00:00:00")
-                (sox end end "gain" amount)
-                (sox middle middle)]}))
+    (sox input output "fade" "l" duration)
+    output))
 
 (defn fade-out
   "Fades the input to zero for the last `duration`."
   [input duration]
-  (throw (ex-info "Not yet implemented" {:reason :not-yet-implemented})))
+  (let [output (new-file)]
+    (sox input output "fade" "l" 0 0 duration)))
 
-(defn apply-step
-  [state step]
-  (let [{:keys [commands output]} (step (:output state))]
-    (-> state
-        (update-in [:commands] into commands)
-        (assoc :output output))))
-
-(defn apply-chain
-  [input steps]
-  (reduce apply-step {:commands [] :output input} steps))
+(defn to-wav
+  "Converts input to a wav file"
+  [input]
+  (let [output (new-file)]
+    ;; TODO: I should think it would be obvious what needs to be done here
+    (sh "c:/bin/ffmpeg-git-01fcbdf-win32-static/bin/ffmpeg.exe" 
+        "-y"                            ; Overwrite output file
+        "-i" input
+        output)
+    output))
 
 (defn commands
   [config]
-  (let [voice (apply-chain (-> config :voices :both)
-                           [(if (-> config :voices :pan?) pan no-op)
-                            #(trim-voices %
-                                          (-> config :voices :start)
-                                          (-> config :voices :end)
-                                          (-> config :voices :fade-in))
-                            #(fade-in %
-                                      (-> config :voices :fade-in))])
-        intro (apply-chain (-> config :music :intro)
-                           [#(fade-down %
-                                        (-> config :music :intro :full-volume-length)
-                                        (-> config :voices :fade-in)
-                                        (-> config :music :intro :fade-amount))
-                            #(fade-out %
-                                       (-> config :music :intro :fade-out))])]
-
-    (:commands voice)))
+  (let [pan-f (if (-> config :voices :pan?) pan identity)
+        voice (-> config :voices :both
+                  pan-f
+                  (trim 
+                   (-> config :voices :start)
+                   (-> config :voices :end)
+                   (-> config :voices :fade-in))
+                  (fade-in
+                   (-> config :voices :fade-in)))
+        music-soft-start (add-time (-> config :music :intro :full-volume-length)
+                                   (-> config :voices :fade-in))
+        music-soft-end (add-time music-soft-start
+                                 (subtract-time (-> config :voices :intro-music-fade)
+                                                (-> config :voices :start)))
+        intro (-> config :music :intro :file
+                  to-wav
+                  (fade
+                   [[1.0 (-> config :music :intro :full-volume-length)]
+                    [(-> config :music :intro :fade-amount) music-soft-start]
+                    [(-> config :music :intro :fade-amount) music-soft-end]
+                    [0 (add-time music-soft-end (-> config :music :intro :fade-out))]]))]
+    {:intro intro
+     :voices voice}))
 
 (defn -main
   "Entry point for the application"
   [config-path]
   (let [config (-> config-path io/reader (java.io.PushbackReader.) edn/read)]
-    (print-header)
-    (doseq [c (commands config)]
-      (when c (println c)))))
+    (println (commands config))))
