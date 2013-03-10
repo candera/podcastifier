@@ -1,23 +1,10 @@
 (ns podcastifier.main
   (:gen-class)
-  (:refer-clojure :exclude [println])
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str])
-  (:import [WavFile WavFile]))
-
-(defn println
-  "Prints without a stupid carriage return, which is screwing me."
-  [& args]
-  (apply print args)
-  (print \newline))
-
-(defn print-header
-  "Print stuff that should go at the top of the script"
-  []
-  (println "#!/bin/bash")
-  (println))
+  (:import [WavFileUtils WavFile]))
 
 (def file-number (atom 0))
 
@@ -155,9 +142,9 @@
     output))
 
 (defn add-time
-  "Adds time `t1` to `t2`"
-  [t1 t2]
-  (+ (normalize-time t1) (normalize-time t2)))
+  "Sums `times`"
+  [& times]
+  (reduce + (map normalize-time times)))
 
 (defn subtract-time
   "Subtracts time `t2` from `t1`"
@@ -190,10 +177,11 @@
     output))
 
 (defn trim
-  [input start end fade-up]
+  "Truncates `input` to the region between `start` and `end`."
+  [input start end]
   (let [output (new-file)
-        trim1 (-> start normalize-time (subtract-time fade-up) time->str)
-        trim2 (-> end time->str)]
+        trim1 (-> start normalize-time time->str)
+        trim2 (-> end normalize-time time->str)]
     (sox input output "trim" (str "=" trim1) (str "=" trim2))
     output))
 
@@ -277,7 +265,17 @@
         (let [frames-to-write (min frames-remaining buffer-frames)]
           (.writeFrames output-wav buffer frames-to-write)
           (recur (- frames-remaining frames-to-write)))))
+    (.close input-wav)
+    (.close output-wav)
     output))
+
+(defn length
+  "Returns the length of `input` in seconds."
+  [input]
+  (with-open [input-wav (-> input io/file WavFile/openWavFile)]
+    (let [sample-rate (.getSampleRate input-wav)
+          frame-count (.getNumFrames input-wav)]
+      (/ (double frame-count) sample-rate))))
 
 (defn -main
   "Entry point for the application"
@@ -287,9 +285,10 @@
           voice (-> config :voices :both
                     pan-f
                     (trim
-                     (-> config :voices :start)
-                     (-> config :voices :end)
-                     (-> config :voices :fade-in))
+                     (subtract-time
+                      (-> config :voices :start)
+                      (-> config :voices :fade-in))
+                     (-> config :voices :end))
                     (fade-in
                      (-> config :voices :fade-in)))
           voice-rate (rate voice)
@@ -306,7 +305,7 @@
                       [(-> config :music :intro :fade-amount) intro-soft-start]
                       [(-> config :music :intro :fade-amount) intro-soft-end]
                       [0.0 intro-end]])
-                    (trim 0.0 intro-end 0.0))
+                    (trim 0.0 intro-end))
           outro-fade-up-start (subtract-time (-> config :voices :end)
                                              (-> config :voices :outro-music-start))
           outro-fade-up-end (add-time outro-fade-up-start
@@ -324,21 +323,36 @@
                       [1.0 outro-fade-out-start]
                       [0.0 outro-fade-out-end]])
                     (match-sample-rate voice)
-                    (trim 0.0 outro-fade-out-end 0.0))
+                    (trim 0.0 outro-fade-out-end))
           outro-music-start (-> (-> config :voices :outro-music-start)
                                 (subtract-time (-> config :voices :start))
                                 (add-time (-> config :voices :fade-in)))
-          with-outro (mix voice outro outro-music-start)
-          with-intro (mix intro with-outro (-> config :music :intro :full-volume-length))
-          with-bloops (append (-> config :bloops :bumper)
-                              (silence voice 3)
-                              with-intro
-                              (silence voice 2)
-                              (-> config :bloops :end))]
-      {:intro intro
-       :voices voice
-       :outro outro
-       :with-outro with-outro
-       :with-intro with-intro
-       :outro-times [outro-fade-up-start outro-fade-up-end outro-fade-out-start outro-fade-out-end]
-       :with-bloops with-bloops})))
+          voice-with-outro (mix voice outro outro-music-start)
+          voice-with-intro (mix intro voice-with-outro
+                                (-> config :music :intro :full-volume-length))
+          bumper-length (length (-> config :bumper))
+          bumper-music-start (-> config :music :bumper :start-at)
+          bumper-music-fade-start (add-time bumper-music-start bumper-length)
+          bumper-music-end (add-time bumper-music-fade-start
+                                     (-> config :music :bumper :fade-out))
+          bumper-fade (-> config :music :bumper :fade-amount)
+          bumper-music (-> config :music :bumper :file
+                           (to-wav voice-rate)
+                           (trim bumper-music-start bumper-music-end)
+                           (fade [[bumper-fade 0.0]
+                                  [bumper-fade bumper-length]
+                                  [0.0 (add-time bumper-length
+                                                 (-> config :music :bumper :fade-out))]]))
+          bumper-with-music (-> config :bumper
+                                (to-wav voice-rate)
+                                (mix bumper-music 0.0))
+          final (append bumper-with-music
+                        (silence voice 1)
+                        (-> config :bloops :bumper)
+                        (silence voice 3)
+                        voice-with-intro
+                        (silence voice 2)
+                        (-> config :bloops :end))]
+      {:bumper-with-music bumper-with-music
+       :voice-with-intro voice-with-intro
+       :final final})))

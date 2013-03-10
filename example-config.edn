@@ -14,6 +14,10 @@
                  :fade-up "00:00:02"
                  :full-volume-length "00:00:30"
                  :fade-out "00:00:15"}
-         :bumper "bumper-music.mp3"}
+         :bumper {:file "bumper-music.mp3"
+                  :fade-amount 0.1
+                  :start-at "00:00:30"
+                  :fade-out "00:00:01"}}
+ :bumper "bumper.wav"
  :bloops {:bumper "keypickup.wav"
           :end "exit.wav"}}
