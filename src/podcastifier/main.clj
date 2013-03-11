@@ -4,7 +4,7 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str])
-  (:import [WavFileUtils WavFile]))
+  (:import [WavFile WavFile]))
 
 (def file-number (atom 0))
 
@@ -198,16 +198,18 @@
     (sox input output "fade" "l" 0 0 duration)))
 
 (defn to-wav
-  "Converts input to a wav file at sample rate `rate`"
-  [input rate]
-  (let [output (new-file)]
-    ;; TODO: I should think it would be obvious what needs to be done here
-    (sh "c:/bin/ffmpeg-git-01fcbdf-win32-static/bin/ffmpeg.exe"
-        "-y"                            ; Overwrite output file
-        "-i" input
-        "-ar" rate                      ; Convert to target sample rate
-        output)
-    output))
+  "Converts input to a wav file at sample rate `rate` with `channels`
+  channels. Default number of channels is 2."
+  ([input rate] (to-wav input rate 2))
+  ([input rate channels]
+     (let [output (new-file)]
+       (sh "ffmpeg"
+           "-y"                        ; overwrite output file
+           "-i" input
+           "-ar" rate                  ; Convert to target sample rate
+           "-ac" channels              ; Convert to target number of channels
+           output)
+       output)))
 
 (defn mix
   "Mixes files `input1` and `input2` together, delaying `input2` by
@@ -241,7 +243,7 @@
   "Concatenates files together."
   [& inputs]
   (let [output (new-file)]
-    (apply sox "--combine" "sequence" (conj (vec inputs) output))
+    (apply sox (conj (vec inputs) output))
     output))
 
 (defn silence
@@ -348,11 +350,11 @@
                                 (mix bumper-music 0.0))
           final (append bumper-with-music
                         (silence voice 1)
-                        (-> config :bloops :bumper)
+                        (to-wav (-> config :bloops :bumper) voice-rate)
                         (silence voice 3)
                         voice-with-intro
                         (silence voice 2)
-                        (-> config :bloops :end))]
+                        (to-wav (-> config :bloops :end) voice-rate))]
       {:bumper-with-music bumper-with-music
        :voice-with-intro voice-with-intro
        :final final})))
