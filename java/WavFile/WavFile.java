@@ -27,10 +27,11 @@ public class WavFile
 	private int bytesPerSample;			// Number of bytes required to store a single sample
 	private long numFrames;					// Number of frames within the data section
 	private FileOutputStream oStream;	// Output stream used for writting data
-	private FileInputStream iStream;		// Input stream used for reading data
+	private RandomAccessFile iStream;		// Input file used for reading data
 	private double floatScale;				// Scaling factor used for int <-> float conversion				
 	private double floatOffset;			// Offset factor used for int <-> float conversion				
 	private boolean wordAlignAdjust;		// Specify if an extra byte at the end of the data chunk is required for word alignment
+    private long headerBytes;               // Number of bytes at the beginning of the file that we have to skip over to get the frame data
 
 	// Wav Header
 	private int numChannels;				// 2 bytes unsigned, 0x0001 (1) to 0xFFFF (65,535)
@@ -175,9 +176,10 @@ public class WavFile
 		// Instantiate new Wavfile and store the file reference
 		WavFile wavFile = new WavFile();
 		wavFile.file = file;
+                wavFile.headerBytes = 0;
 
 		// Create a new file input stream for reading file data
-		wavFile.iStream = new FileInputStream(file);
+		wavFile.iStream = new RandomAccessFile(file, "r");
 
 		// Read the first 12 bytes of the file
 		int bytesRead = wavFile.iStream.read(wavFile.buffer, 0, 12);
@@ -249,7 +251,7 @@ public class WavFile
 				// Account for number of format bytes and then skip over
 				// any extra format bytes
 				numChunkBytes -= 16;
-				if (numChunkBytes > 0) wavFile.iStream.skip(numChunkBytes);
+				if (numChunkBytes > 0) wavFile.skipInputBytes(numChunkBytes);
 			}
 			else if (chunkID == DATA_CHUNK_ID)
 			{
@@ -273,7 +275,7 @@ public class WavFile
 			else
 			{
 				// If an unknown chunk ID is found, just skip over the chunk data
-				wavFile.iStream.skip(numChunkBytes);
+                            wavFile.skipInputBytes(numChunkBytes);
 			}
 		}
 
@@ -300,6 +302,7 @@ public class WavFile
 		wavFile.bytesRead = 0;
 		wavFile.frameCounter = 0;
 		wavFile.ioState = IOState.READING;
+                wavFile.headerBytes = wavFile.iStream.getFilePointer();
 
 		return wavFile;
 	}
@@ -368,6 +371,18 @@ public class WavFile
 
 		return val;
 	}
+    
+    // Positioning
+    // -----------
+    private void skipInputBytes(long bytesToSkip) throws IOException
+    {
+        iStream.seek(iStream.getFilePointer() + bytesToSkip);
+    }
+    
+    public void seekFrame(long frameNum) throws IOException
+    {
+        iStream.seek(headerBytes + (bytesPerSample * numChannels * frameNum));
+    }
 
 	// Integer
 	// -------
