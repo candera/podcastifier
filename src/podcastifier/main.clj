@@ -4,7 +4,9 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str])
-  (:import [WavFile WavFile]))
+  (:import [WavFile WavFile]
+           [javax.sound.sampled AudioFormat AudioFormat$Encoding
+            AudioInputStream AudioSystem Clip]))
 
 ;;; File management
 
@@ -347,6 +349,46 @@ l  seconds later."
 
       java.io.Closeable
       (close [this] (.close input-wav)))))
+
+(defn- ->InputStream
+  "Returns an instance of java.io.InputStream that samples sound `s` at `sample-rate` per second."
+  [s sample-rate]
+  (let [channels (channels s)
+        duration (duration s)
+        n        (atom 0)]
+    (proxy [java.io.InputStream] []
+      (read ^int
+        ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
+        ([^bytes bytes] (throw (ex-info "Not implemented" {:reason :not-implemented})))
+        ([^bytes bytes ^Integer offset ^Integer length]
+           (dotimes [i length]
+             (aset bytes (+ i offset) todo)))))))
+
+(defn ->AudioInputStream
+  "Returns an instance of javax.sound.AudioInputStream that samples
+  sound `s`."
+  [s]
+  (let [channels (channels s)
+        duration (duration s)
+        sample-rate 44000.0]
+   (AudioInputStream. (->InputStream s sample-rate)
+                      (AudioFormat. AudioFormat$Encoding/PCM_FLOAT
+                                    sample-rate
+                                    32
+                                    channels
+                                    (* 4 channels)
+                                    (* channels sample-rate)
+                                    true)
+                      (long (* duration sample-rate)))))
+
+(defn play
+  "Plays `sound`. Returns a javax.sound.sampled.Clip immediately,
+  before the sound has finished playing."
+  [s]
+  (doto (AudioSystem/getClip)
+    (.open (->AudioInputStream s))
+    (.setFramePosition 0)
+    (.start)))
 
 (defn -main
   "Entry point for the application"
