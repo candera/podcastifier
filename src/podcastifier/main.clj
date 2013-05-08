@@ -108,7 +108,10 @@
   (duration [this] (:duration this))
   (sample [this t]   (if (<= 0 t (:duration this))
                        ((:sampler this) t)
-                       0.0)))
+                       ;; Otherwise, a vector containing as many zeros
+                       ;; as there channels, which we infer from the
+                       ;; sample at t=0.0
+                       (vec (repeat (count ((:sampler this) 0.0)) 0.0)))))
 
 (defn null-sound
   "Returns a zero-duration sound with one channel."
@@ -128,14 +131,14 @@
   (let [[last-v last-t] (last controls)]
     (if (<= last-t t)
       last-v
-      (let
-          [c* (apply vector [1.0 0] controls)
-           control-pairs (partition 2 1 c*)
-           [start-v start-t end-v end-t]
-           (some (fn [[[start-v start-t] [end-v end-t]]]
-                   (when (<= start-t t end-t)
-                     [start-v start-t end-v end-t]))
-                 control-pairs)]
+      (let [c* (apply vector [1.0 0] controls)
+            control-pairs (partition 2 1 c*)
+
+            [start-v start-t end-v end-t]
+            (some (fn [[[start-v start-t] [end-v end-t]]]
+                    (when (<= start-t t end-t)
+                      [start-v start-t end-v end-t]))
+                  control-pairs)]
         (if (= end-t start-t)
           start-v
           (let [delta-v (- (double end-v) start-v)
@@ -303,17 +306,6 @@ l  seconds later."
 
 ;;; Wav files
 
-(defn- read-chunk
-  [input-wav chunk-start chunk-frames]
-  (let [channels      (.getNumChannels input-wav)
-        sample-rate   (.getSampleRate input-wav)
-        frame-count   (.getNumFrames input-wav)
-        chunk-samples (* channels chunk-frames)
-        chunk         (double-array chunk-samples)]
-    (dotimes [_ (inc chunk-start)]
-      (.readFrames input-wav chunk chunk-frames))
-    chunk))
-
 (defn- get-frame
   "Returns the `n`th frame of `input-wav`"
   [input-wav n]
@@ -350,36 +342,80 @@ l  seconds later."
       java.io.Closeable
       (close [this] (.close input-wav)))))
 
+(defn- scale-int
+  "Takes a floating-point number f in the range [-1.0, 1.0] and scales
+  it to the range of a 32-bit integer. Clamps any overflows."
+  [f]
+  (let [f* (-> f (min 1.0) (max -1.0))]
+    (int (* Integer/MAX_VALUE f))))
+
+(defn- scale-short
+  "Takes a floating-point number f in the range [-1.0, 1.0] and scales
+  it to the range of a 16-bit integer. Clamps any overflows."
+  [f]
+  (let [f* (-> f (min 1.0) (max -1.0))]
+    (int (* Short/MAX_VALUE f))))
+
 (defn- ->InputStream
-  "Returns an instance of java.io.InputStream that samples sound `s` at `sample-rate` per second."
-  [s sample-rate]
+  "Returns an instance of java.io.InputStream that samples sound `s` at
+  `sample-rate` frames per second."
+  [s sample-rate bits-per-sample]
   (let [channels (channels s)
         duration (duration s)
-        n        (atom 0)]
+        n        (atom 0)
+        frame-t  (/ 1.0 sample-rate)
+        bytes-per-sample (/ bits-per-sample 8)]
     (proxy [java.io.InputStream] []
       (read ^int
         ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
         ([^bytes bytes] (throw (ex-info "Not implemented" {:reason :not-implemented})))
         ([^bytes bytes ^Integer offset ^Integer length]
-           (dotimes [i length]
-             (aset bytes (+ i offset) todo)))))))
+           (println "read(" bytes offset length ")")
+           (when-not (zero? (mod length (* channels bytes-per-sample)))
+             (throw (ex-info "Non-integral number of frames requested"
+                             {:reason :non-integral-frames-requested})))
+           (let [start-t       (/ (double @n) sample-rate)
+                 length-t      (/ (double length) sample-rate)
+                 end-t         (min duration (+ start-t length-t))
+                 length-frames (long (* sample-rate (- end-t start-t)))]
+             (println "start-t" start-t)
+             (println "length-t" length-t)
+             (println "end-t" end-t)
+             (println "frame-t" frame-t)
+             (println "length-frames" length-frames)
+             (println "n" @n)
+             (if (pos? length-frames)
+               (let [bytes-transferred (* length-frames channels bytes-per-sample)
+                     bb (java.nio.ByteBuffer/allocate bytes-transferred)]
+                 (doseq [frame (range length-frames)]
+                   (let [t (+ start-t (* end-t frame))
+                         samp (sample s t)]
+                     (dotimes [i channels]
+                       (case bits-per-sample
+                         32 (.putInt bb (scale-int (nth samp i)))
+                         16 (.putShort bb (scale-short (nth samp i)))))))
+                 (System/arraycopy (.array bb) 0 bytes offset bytes-transferred)
+                 (swap! n + bytes-transferred)
+                 bytes-transferred)
+               -1)))))))
 
 (defn ->AudioInputStream
   "Returns an instance of javax.sound.AudioInputStream that samples
   sound `s`."
-  [s]
-  (let [channels (channels s)
-        duration (duration s)
-        sample-rate 44000.0]
-   (AudioInputStream. (->InputStream s sample-rate)
-                      (AudioFormat. AudioFormat$Encoding/PCM_FLOAT
-                                    sample-rate
-                                    32
-                                    channels
-                                    (* 4 channels)
-                                    (* channels sample-rate)
-                                    true)
-                      (long (* duration sample-rate)))))
+  ([s] (->AudioInputStream s 44000))
+  ([s sample-rate]
+     (let [channels (channels s)
+           duration (duration s)
+           bits-per-sample 16]
+       (AudioInputStream. (->InputStream s sample-rate bits-per-sample)
+                          (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
+                                        sample-rate
+                                        bits-per-sample
+                                        channels
+                                        (* (/ bits-per-sample 8) channels)
+                                        (* channels sample-rate)
+                                        true)
+                          (long (* duration sample-rate))))))
 
 (defn play
   "Plays `sound`. Returns a javax.sound.sampled.Clip immediately,
