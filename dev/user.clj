@@ -5,7 +5,7 @@
             [clojure.pprint :refer [pprint]]
             [clojure.repl :refer [doc pst]]
             [clojure.tools.namespace.repl :refer [refresh]]
-            [podcastifier.main :as main]))
+            [podcastifier.main :refer :all]))
 
 (defn init
   [])
@@ -26,7 +26,7 @@
   []
   (-> "example-config.edn" io/reader java.io.PushbackReader. edn/read))
 
-(defn main
-  []
-  (main/-main "example-config.edn"))
+;; (defn main
+;;   []
+;;   (main/-main "example-config.edn"))
 
