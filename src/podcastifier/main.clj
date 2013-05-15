@@ -316,31 +316,30 @@ l  seconds later."
     (.readFrames input-wav buffer 1)
     (vec buffer)))
 
+;; TODO: implement other sampling strategies
 (defn wav->sound
-  [path]
-  (let [input-wav   (-> path io/file WavFile/openWavFile)
-        channels    (.getNumChannels input-wav)
-        sample-rate (.getSampleRate input-wav)
-        frame-count (.getNumFrames input-wav)
-        wav-length  (/ (double frame-count) sample-rate)]
-    (reify
-      Sound
-      (duration [this] wav-length)
-      (sample [this t]
-        (let [sample-index (* t sample-rate)
-              before-frame-num (long sample-index)
-              before-frame (get-frame input-wav before-frame-num)
-              after-frame (get-frame input-wav (inc before-frame-num))  ; Guard against last frame
-              proportion (* (- t (/ (double before-frame-num) sample-rate))
-                            sample-rate)]
-          (mapv (fn [s1 s2]
-                  (+ (* (- 1.0  proportion) s1)
-                     (* proportion s2)))
-                before-frame
-                after-frame)))
+  "Returns a sound for the wave file at `path`. Samples using strategy
+  `strategy`, which currently is ignored."
+  ([path] (wav->sound path :previous))
+  ([path strategy]
+     (let [input-wav   (-> path io/file WavFile/openWavFile)
+           channels    (.getNumChannels input-wav)
+           sample-rate (.getSampleRate input-wav)
+           frame-count (.getNumFrames input-wav)
+           current-frame (atom [])
+           wav-length  (/ (double frame-count) sample-rate)]
+       (reify
+         Sound
+         (duration [this] wav-length)
+         (sample [this t]
+           (if (< 0.0 t wav-length)
+             (let [sample-index (* t sample-rate)
+                   before-frame-num (long sample-index)]
+               (get-frame input-wav before-frame-num))
+             (vec (repeat channels 0.0))))
 
-      java.io.Closeable
-      (close [this] (.close input-wav)))))
+         java.io.Closeable
+         (close [this] (.close input-wav))))))
 
 (defn short-sample
   "Takes a floating-point number f in the range [-1.0, 1.0] and scales

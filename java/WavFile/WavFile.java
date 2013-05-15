@@ -382,6 +382,9 @@ public class WavFile
     public void seekFrame(long frameNum) throws IOException
     {
         iStream.seek(headerBytes + (bytesPerSample * numChannels * frameNum));
+        bytesRead = 0;
+        bufferPointer = 0;
+        frameCounter = frameNum;
     }
 
 	// Integer
