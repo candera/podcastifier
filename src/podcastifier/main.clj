@@ -3,7 +3,9 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [incanter.core :as incanter]
+            [incanter.charts :as charts])
   (:import [WavFile WavFile]
            [javax.sound.sampled AudioFormat AudioFormat$Encoding
             AudioInputStream AudioSystem Clip]))
@@ -380,6 +382,20 @@ l  seconds later."
           (let [bytes-written (.write sdl (.array bb) 0 bytes-to-write)]
             (.start sdl)                ; Repeated calls are harmless
             (recur (+ current-byte bytes-written))))))))
+
+;;; Visualization
+
+(defn visualize
+  "Visualizes `s` by plottig it on a graph."
+  ([s] (visualize s 0))
+  ([s channel]
+     (let [duration (duration s)]
+       ;; TODO: Maybe use a function that shows power in a window
+       ;; around time t rather than just the sample
+       (incanter/view (charts/function-plot #(nth (sample s %) channel 0.0)
+                                            0.0
+                                            duration
+                                            :step-size (/ duration 4000.0))))))
 
 (defn -main
   "Entry point for the application"

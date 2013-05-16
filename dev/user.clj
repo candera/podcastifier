@@ -5,8 +5,6 @@
             [clojure.pprint :refer [pprint]]
             [clojure.repl :refer [doc pst]]
             [clojure.tools.namespace.repl :refer [refresh]]
-            [incanter.core :as incanter]
-            [incanter.charts :as charts]
             [podcastifier.main :refer :all])
   (:import [javax.sound.sampled AudioSystem AudioFormat]))
 
@@ -96,8 +94,3 @@
             (.start sdl)                ; Repeated calls are harmless
             (recur (+ current-byte bytes-written))))))))
 
-(defn visualize
-  "Visualizes `s` by plottig it on a graph."
-  ([s] (visualize s 0))
-  ([s channel]
-     (incanter/view (charts/function-plot #(nth (sample s %) channel 0.0) 0.0 (duration s) :step-size (/ 1.0 44000)))))
