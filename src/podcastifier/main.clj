@@ -219,10 +219,10 @@ l  seconds later."
 (defn trim
   "Truncates `s` to the region between `start` and `end`."
   [s start end]
-  (let [start* (-> start normalize-time time->str)
-        end* (-> end normalize-time time->str)]
+  (let [start* (-> start normalize-time)
+        end* (-> end normalize-time)]
     (->BasicSound (- end* start*)
-                  (fn [^double t] (sample s (- t start))))))
+                  (fn [^double t] (sample s (+ t start))))))
 
 (defn fade-in
   "Fades `s` linearly from zero at the beginning to full volume at
