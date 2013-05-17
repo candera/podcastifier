@@ -306,7 +306,7 @@ l  seconds later."
   [duration]
   (->BasicSound duration (constantly [0.0])))
 
-;;; Wav files
+;;; Sound files
 
 (defn- get-frame
   "Returns the `n`th frame of `input-wav`"
@@ -342,6 +342,8 @@ l  seconds later."
 
          java.io.Closeable
          (close [this] (.close input-wav))))))
+
+;;; Play
 
 (defn short-sample
   "Takes a floating-point number f in the range [-1.0, 1.0] and scales
