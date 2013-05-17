@@ -94,3 +94,99 @@
             (.start sdl)                ; Repeated calls are harmless
             (recur (+ current-byte bytes-written))))))))
 
+;;; Reading from files
+
+(defn random-access-file-input-stream
+  "Given `path` returns a java.io.InputStream over it that supports
+  random access via mark and reset."
+  [path]
+  (let [raf (java.io.RandomAccessFile. (io/file path) "r")
+        marked-position (atom nil)]
+   (proxy [java.io.InputStream] []
+     (available [] (- (.length raf) (.getFilePointer raf)))
+     (close [] (.close raf))
+     (mark [readlimit] (reset! marked-position (.getFilePointer raf)))
+     (markSupported [] true)
+     (read ^int
+       ([] (.read raf))
+       ([buf] (.read raf buf))
+       ([^bytes buf off len] (.read raf buf off len)))
+     (reset [] (.seek raf @marked-position))
+     (skip [n] (.skipBytes raf n)))))
+
+(defn conversion-audio-input-stream
+  "Returns an AudioInputStream on top of a java.io.InputStream."
+  [original-input-stream frames-per-second bits-per-sample]
+  (let [original-ais (AudioSystem/getAudioInputStream original-input-stream)
+        original-format (.getFormat original-ais)
+        channels (.getChannels original-format)]
+    (AudioSystem/getAudioInputStream
+     (AudioFormat. frames-per-second bits-per-sample channels true true)
+     original-ais)))
+
+(defn read-sound
+  "Returns a sound for the file at `path`."
+  [path]
+  (let [frames-per-second 44100
+        bits-per-sample 32
+        original-file (io/file path)
+        original-input-stream ^java.io.InputStream (random-access-file-input-stream path)
+        original-file-format (AudioSystem/getAudioFileFormat original-file)
+        original-format (.getFormat original-file-format)
+        original-encoding (-> original-format .getEncoding str)
+        original-frame-rate (.getFrameRate original-format)
+        original-file-duration (-> original-file-format
+                                   .getFrameLength
+                                   (/ original-frame-rate))
+        channels (.getChannels original-format)
+        conversion-ais (atom (conversion-audio-input-stream original-input-stream
+                                                            frames-per-second
+                                                            bits-per-sample))
+        conversion-format (.getFormat @conversion-ais)
+        bytes-per-frame (.getFrameSize conversion-format)
+        bytes-per-second (* bytes-per-frame frames-per-second)
+        scale-value (Math/pow 2 (dec bits-per-sample))
+        ;; Bug workaround for weird double-speed playback of MP3 files
+        time-conversion (if (= "MPEG1L3" original-encoding) 2.0 1.0)
+        cache (atom [-1 nil])]
+    (.mark original-input-stream 0)
+    (reify
+      Sound
+      (duration [this] original-file-duration)
+      (sample [this t]
+        (let [frame-num (-> t (/ time-conversion) (* frames-per-second) long)
+              byte-num (* frame-num bytes-per-frame)
+              bb (java.nio.ByteBuffer/allocate bytes-per-frame)
+              buf (byte-array bytes-per-frame)
+              [last-frame-num last-frame] @cache]
+          (if (= last-frame-num frame-num)
+            last-frame
+            (do
+              (if (< last-frame-num frame-num)
+                (let [bytes-to-skip (* bytes-per-frame (- frame-num last-frame-num 1))]
+                  (when (pos? bytes-to-skip)
+                    (.skip @conversion-ais bytes-to-skip)))
+                (do
+                  ;; We need to reopen the stream, because the MP3
+                  ;; support doesn't let us rewind
+                  (.reset original-input-stream)
+                  (reset! conversion-ais (conversion-audio-input-stream original-input-stream
+                                                                        frames-per-second
+                                                                        bits-per-sample))
+                  (.skip @conversion-ais byte-num)))
+              (.read @conversion-ais buf)
+              (.put bb buf)
+              (.position bb 0)
+              (let [frame (vec (repeatedly channels #(/ (.getInt bb) scale-value)))]
+                (reset! cache [frame-num frame])
+                frame)))))
+
+      java.io.Closeable
+      (close [this]
+        (.close @conversion-ais)
+        ;;(.close original-ais)
+        (.close original-input-stream)))))
+
+(def s1 (read-sound "bumper.wav"))
+(def s2 (read-sound "bumper-music.mp3"))
+(def s3 (read-sound "C:/audio/craig/Led Zeppelin/Led Zeppelin II/01 Whole Lotta Love.mp3"))
