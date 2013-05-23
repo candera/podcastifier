@@ -360,7 +360,7 @@ l  seconds later."
 (defn play
   "Plays `sound`. May return before sound has finished playing."
   [s]
-  (let [sample-rate  44000
+  (let [sample-rate  44100
         channels     (channels s)
         sdl          (AudioSystem/getSourceDataLine (AudioFormat. sample-rate
                                                                   16
