@@ -378,7 +378,9 @@ l  seconds later."
               bytes-to-write (min bytes-remaining buffer-bytes)]
           (.position bb 0)
           (doseq [i (range 0 bytes-to-write (* 2 channels))]
-            (let [frame (sample s (byte->t (+ current-byte i)))]
+            (let [t  (byte->t (+ current-byte i))
+                  frame (sample s t)]
+              ;;(println t frame)
               (doseq [samp frame]
                 (.putShort bb (short-sample samp)))))
           (let [bytes-written (.write sdl (.array bb) 0 bytes-to-write)]
