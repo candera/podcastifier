@@ -156,6 +156,122 @@
                 (fn [^double t]
                   [(Math/sin (* t frequency 2.0 Math/PI))])))
 
+;;; File-based Sound
+
+(defn- advance-frames
+  "Reads and discards `n` frames from AudioInputStream `ais`. Returns
+  the number of frames actually read."
+  [^AudioInputStream ais n]
+  (let [bytes-per-frame (-> ais .getFormat .getFrameSize)
+        discard-frame-max 1000
+        discard-buffer-bytes (* bytes-per-frame discard-frame-max)
+        discard-buffer (byte-array discard-buffer-bytes)]
+    (loop [total-frames-read 0]
+      (let [frames-left-to-read (- n total-frames-read)]
+        (if (pos? frames-left-to-read)
+          (let [frames-to-read (min discard-frame-max frames-left-to-read)
+                bytes-to-read (* bytes-per-frame frames-to-read)
+                bytes-read (.read ais discard-buffer (int 0) (int bytes-to-read))
+                frames-read (/ bytes-read bytes-per-frame)]
+            (if (neg? frames-read)
+              total-frames-read
+              (recur (+ total-frames-read frames-read))))
+          total-frames-read)))))
+
+(defn read-sound
+  "Returns a Sound for the file at `path`."
+  [path]
+  (let [file                   (io/file path)
+        in                     (atom (AudioSystem/getAudioInputStream file))
+        base-format            (.getFormat @in)
+        base-file-format       (AudioSystem/getAudioFileFormat file)
+        base-file-properties   (.properties base-file-format)
+        base-file-duration     (get base-file-properties "duration")
+        bits-per-sample        16
+        bytes-per-sample       (/ bits-per-sample 8)
+        channels               (.getChannels base-format)
+        bytes-per-frame        (* bytes-per-sample channels)
+        frames-per-second      (.getSampleRate base-format)
+        decoded-format         (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
+                                             frames-per-second
+                                             bits-per-sample
+                                             channels
+                                             (* bytes-per-sample channels)
+                                             frames-per-second
+                                             true)
+        din                    (atom (AudioSystem/getAudioInputStream decoded-format @in))
+        decoded-length-seconds (if base-file-duration
+                                 (/ base-file-duration 1000000.0)
+                                 (/ (.getFrameLength @din) frames-per-second))
+        buffer-seconds         10
+        buffer                 (byte-array (* frames-per-second
+                                              buffer-seconds
+                                              channels
+                                              bytes-per-sample))
+        starting-buffer-pos    [nil nil]
+        buffer-pos             (atom starting-buffer-pos)
+        bb                     (java.nio.ByteBuffer/allocate bytes-per-frame)]
+    (reify
+      Sound
+      (duration [s] decoded-length-seconds)
+      (sample [s t]
+        (if-not (<= 0.0 t decoded-length-seconds)
+          (vec (repeat channels 0.0))
+          (let [frame-at-t (-> t (* frames-per-second) long)]
+            ;;(println "buffer-pos" @buffer-pos)
+
+            ;; Desired frame is before current buffer. Reset everything
+            ;; to the start state
+            (let [effective-start-of-buffer (or (first @buffer-pos) -1)]
+             (when (< frame-at-t effective-start-of-buffer)
+               ;;(println "rewinding")
+               (.close @din)
+               (.close @in)
+               (reset! in (AudioSystem/getAudioInputStream (io/file path)))
+               (reset! din (AudioSystem/getAudioInputStream decoded-format @in))
+               (reset! buffer-pos starting-buffer-pos)))
+
+            ;; Desired position is past the end of the buffered region.
+            ;; Update buffer to include it.
+            (let [effective-end-of-buffer (or (second @buffer-pos) -1)]
+             (when (< effective-end-of-buffer frame-at-t)
+               (let [frames-to-advance (- frame-at-t effective-end-of-buffer 1)]
+                 ;; We can't skip, because there's state built up during .read
+                 ;; (println "Advancing to frame" frame-at-t
+                 ;;          "by going forward" frames-to-advance
+                 ;;          "frames")
+                 (let [frames-advanced (advance-frames @din frames-to-advance)]
+                   (if (= frames-to-advance frames-advanced)
+                     (let [bytes-read (.read @din buffer)]
+                       (if (pos? bytes-read)
+                         (let [frames-read (/ bytes-read bytes-per-frame)]
+                           (reset! buffer-pos [frame-at-t (+ frame-at-t frames-read)]))
+                         (reset! buffer-pos starting-buffer-pos)))
+                     (reset! buffer-pos starting-buffer-pos))))))
+
+            ;; Now we're either positioned or the requested position
+            ;; cannot be found
+            (let [[buffer-start-pos buffer-end-pos] @buffer-pos]
+              (if buffer-end-pos
+                (let [buffer-frame-offset (- frame-at-t buffer-start-pos)
+                      buffer-byte-offset (* buffer-frame-offset bytes-per-frame)]
+                  (.position bb 0)
+                  (.put bb buffer buffer-byte-offset bytes-per-frame)
+                  (.position bb 0)
+                  ;; TODO: We're hardcoded to .getShort here, but the
+                  ;; bits-per-frame is a parameter. Should probably have
+                  ;; something that knows how to read from a ByteBuffer
+                  ;; given a number of bits.
+                  (vec (repeatedly channels #(/ (double (.getShort bb)) (inc Short/MAX_VALUE)))))
+                (vec (repeat channels 0)))))))
+
+      java.io.Closeable
+      (close [this]
+        (.close @din)
+        (.close @in)))))
+
+;;; Sound manipulation
+
 (defn ->stereo
   "Turns a sound into a two-channel sound. Currently works only on
   one- and two-channel inputs."
@@ -357,6 +473,8 @@ l  seconds later."
   []
   (byte (- (rand-int 255) 128)))
 
+;; TODO: There some crackle in the playback. Figure out why and kill
+;; it. Maybe oversample?
 (defn play
   "Plays `sound`. May return before sound has finished playing."
   [s]
