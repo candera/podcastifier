@@ -335,12 +335,10 @@ l  seconds later."
   same, and 1.0 would switch the channels."
   [s amount]
   {:pre [(= 2 (channels s))]}
-  (let [{source-duration :duration
-         source-sampler :sampler} s
-         amount-complement (- 1.0 amount)]
-    (->BasicSound source-duration
+  (let [amount-complement (- 1.0 amount)]
+    (->BasicSound (duration s)
                   (fn [t]
-                    (let [[a b] (source-sampler t)]
+                    (let [[a b] (sample s t)]
                       [(+ (* a amount-complement)
                           (* b amount))
                        (+ (* a amount)
@@ -349,10 +347,8 @@ l  seconds later."
 (defn trim
   "Truncates `s` to the region between `start` and `end`."
   [s start end]
-  (let [start* (-> start normalize-time)
-        end* (-> end normalize-time)]
-    (->BasicSound (- end* start*)
-                  (fn [^double t] (sample s (+ t start))))))
+  (->BasicSound (- end start)
+                (fn [^double t] (sample s (+ t start)))))
 
 (defn fade-in
   "Fades `s` linearly from zero at the beginning to full volume at
