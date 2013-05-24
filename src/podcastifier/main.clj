@@ -277,9 +277,10 @@
   one- and two-channel inputs."
   [s]
   (case (channels s)
-    1 (->BasicSound (duration (fn [^double t] (let [x (sample s t)] [x x]))))
+    1 (->BasicSound (duration s) (fn [^double t] (let [x (sample s t)] [x x])))
     2 s
-    (throw (ex-info "Not implemented" {:reason :cant-stereoize-channels :s s}))))
+    (throw (ex-info "Can't stereoize sounds with other than one or two channels"
+                    {:reason :cant-stereoize-channels :s s}))))
 
 (defn fade
   "Given `s` returns a new sound whose gain has been adjusted
@@ -352,51 +353,21 @@ l  seconds later."
   (let [end (:duration s)]
     (fade s [[1.0 (- end duration)] [0.0 end]])))
 
-;; TODO: Convert
-(defn to-wav
-  "Converts s to a wav file at sample rate `rate` with `channels`
-  channels. Default number of channels is 2."
-  ([s rate] (to-wav s rate 2))
-  ([s rate channels]
-     (let [output (new-file)]
-       (sh "ffmpeg"
-           "-y"                        ; overwrite output file
-           "-i" s
-           "-ar" rate                  ; Convert to target sample rate
-           "-ac" channels              ; Convert to target number of channels
-           output)
-       output)))
-
 (defn mix
   "Mixes files `s1` and `s2`."
   [s1 s2]
-  (->BasicSound (max s1 s2)
+  (->BasicSound (max (duration s1) (duration s2))
                 (fn [t]
                   (mapv + (sample s1 t) (sample s2 t)))))
 
 (defn timeshift
-  "Inserts `duration` seconds of silence at the beginning of `s`"
-  [s duration]
-  (->BasicSound (+ (duration s) duration)
-                (fn [^double t] (if (< t duration)
-                                  (mapv (constantly 0.0) (sample s 0))
-                                  (sample s (+ t duration))))))
-
-;; (defn rate
-;;   "Return the sample rate of the s in samples-per-second."
-;;   [input]
-;;   (let [input-wav (-> input io/file WavFile/openWavFile)
-;;         sample-rate (.getSampleRate input-wav)]
-;;     (.close input-wav)
-;;     sample-rate))
-
-;; (defn match-sample-rate
-;;   "Converts the input to a file with the same sample rate as `match`"
-;;   [input match]
-;;   (let [output (new-file)
-;;         rate (rate match)]
-;;     (sox input output "rate" "-v" rate)
-;;     output))
+  "Inserts `amount` seconds of silence at the beginning of `s`"
+  [s amount]
+  (let [channels (channels s)]
+   (->BasicSound (+ (duration s) amount)
+                 (fn [^double t] (if (< t amount)
+                                   (vec (repeat channels 0.0))
+                                   (sample s (- t amount)))))))
 
 (defn- input-for-t
   "Given a seq of [start-time end-time sound] tuples, return the tuple
@@ -409,12 +380,12 @@ l  seconds later."
 (defn append
   "Concatenates inputs together."
   [& inputs]
-  (let [end-times (reductions #(+ (duration %)) inputs)
+  (let [end-times (->> inputs (map duration) (reductions +))
         start-times (concat [0.0] end-times)
         input-descriptions (map vector start-times end-times inputs)]
-    (->BasicSound (reduce #(+ (duration %)) inputs)
+    (->BasicSound (last end-times)
                   (fn [^double t]
-                    (let [[start end input] (input-for-t input-descriptions)]
+                    (let [[start end input] (input-for-t input-descriptions t)]
                       (sample input (- t start)))))))
 
 (defn silence
@@ -422,44 +393,7 @@ l  seconds later."
   [duration]
   (->BasicSound duration (constantly [0.0])))
 
-;;; Sound files
-
-(defn- get-frame
-  "Returns the `n`th frame of `input-wav`"
-  [input-wav n]
-  (let [channels (.getNumChannels input-wav)
-        buffer (double-array channels)]
-    ;; TODO: Add a cache if this seems slow. Use Google's Guava cache
-    (.seekFrame input-wav n)
-    (.readFrames input-wav buffer 1)
-    (vec buffer)))
-
-;; TODO: implement other sampling strategies
-(defn wav->sound
-  "Returns a sound for the wave file at `path`. Samples using strategy
-  `strategy`, which currently is ignored."
-  ([path] (wav->sound path :previous))
-  ([path strategy]
-     (let [input-wav   (-> path io/file WavFile/openWavFile)
-           channels    (.getNumChannels input-wav)
-           sample-rate (.getSampleRate input-wav)
-           frame-count (.getNumFrames input-wav)
-           current-frame (atom [])
-           wav-length  (/ (double frame-count) sample-rate)]
-       (reify
-         Sound
-         (duration [this] wav-length)
-         (sample [this t]
-           (if (< 0.0 t wav-length)
-             (let [sample-index (* t sample-rate)
-                   before-frame-num (long sample-index)]
-               (get-frame input-wav before-frame-num))
-             (vec (repeat channels 0.0))))
-
-         java.io.Closeable
-         (close [this] (.close input-wav))))))
-
-;;; Play
+;;; Playback
 
 (defn short-sample
   "Takes a floating-point number f in the range [-1.0, 1.0] and scales
@@ -467,11 +401,6 @@ l  seconds later."
   [f]
   (let [f* (-> f (min 1.0) (max -1.0))]
     (short (* Short/MAX_VALUE f))))
-
-(defn rand-byte
-  "Returns a random byte value"
-  []
-  (byte (- (rand-int 255) 128)))
 
 ;; TODO: There some crackle in the playback. Figure out why and kill
 ;; it. Maybe oversample?
