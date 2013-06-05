@@ -443,6 +443,58 @@ l  seconds later."
             (.start sdl)                ; Repeated calls are harmless
             (recur (+ current-byte bytes-written))))))))
 
+
+;;; Serialization
+
+(defn- sampled-input-stream
+  "Returns an implementation of `InputStream` over `s`."
+  [s sample-rate]
+  (let [bits-per-sample   16
+        marked-position  (atom nil)
+        bytes-read       (atom 0)
+        total-frames     (-> s duration (* sample-rate) long)
+        channels         (channels s)
+        bytes-per-sample (/ bits-per-sample 8)
+        bytes-per-frame  (* channels bytes-per-sample)
+        total-bytes      (* total-frames bytes-per-frame)]
+    (proxy [java.io.InputStream] []
+      (available [] (- total-bytes @bytes-read))
+      (close [])
+      (mark [readLimit] (reset! marked-position @bytes-read))
+      (markSupported [] true)
+      (read ^int
+        ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
+        ([buf] (read this buf 0 (alength buf)))
+        ([^bytes buf off len]
+           (if (<= total-bytes @bytes-read)
+             -1
+             (let [frames-to-read (/ len bytes-per-frame)
+                   bytes-remaining (- total-bytes @bytes-read)
+                   bytes-to-read (min len bytes-remaining)
+                   bb (java.nio.ByteBuffer/allocate bytes-to-read)]
+               (doseq [i (range 0 len bytes-per-frame)]
+                 (let [t     (/ (double (+ i @bytes-read)) (* bytes-per-frame sample-rate))
+                       frame (sample s t)]
+                   (doseq [s frame]
+                     (.putShort bb (* s Short/MAX_VALUE)))))
+               (.position bb 0)
+               (.get bb buf off len)
+               (swap! bytes-read + bytes-to-read)
+               bytes-to-read))))
+      (reset [] (reset! bytes-read @marked-position))
+      (skip [n] (swap! bytes-read + n)))))
+
+(defn save
+  "Save sound `s` to `path` as a 16-bit WAV with `sample-rate`."
+  [s path sample-rate]
+  (AudioSystem/write (AudioInputStream.
+                      (sampled-input-stream s sample-rate)
+                      (AudioFormat. sample-rate 16 (channels s) true true)
+                      (-> s duration (* sample-rate) long))
+                     AudioFileFormat$Type/WAVE
+                     (io/file path)))
+
+
 ;;; Visualization
 
 (defn visualize
