@@ -8,7 +8,8 @@
             [incanter.charts :as charts])
   (:import [WavFile WavFile]
            [javax.sound.sampled AudioFormat AudioFormat$Encoding
-            AudioInputStream AudioSystem Clip]))
+            AudioInputStream AudioSystem Clip
+            AudioFileFormat$Type]))
 
 ;;; File management
 
