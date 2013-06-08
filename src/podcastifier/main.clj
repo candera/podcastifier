@@ -176,6 +176,15 @@
                 (fn [^double t]
                   [(Math/sin (* t frequency 2.0 Math/PI))])))
 
+(defn square-wave
+  "Produces a single-channel sound that toggles between 1.0 and -1.0
+  at frequency `freq`."
+  [duration freq]
+  (->BasicSound duration
+                (fn [t]
+                  (let [x (-> t (* freq 2.0) long)]
+                    (if (even? x) [1.0] [-1.0])))))
+
 ;;; File-based Sound
 
 (defn- advance-frames
