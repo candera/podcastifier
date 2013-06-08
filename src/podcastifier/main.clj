@@ -256,10 +256,10 @@
                  ;;          "frames")
                  (let [frames-advanced (advance-frames @din frames-to-advance)]
                    (if (= frames-to-advance frames-advanced)
-                     (let [bytes-read (.read @din buffer)]
+                     (let [bytes-read (.read ^AudioInputStream @din buffer)]
                        (if (pos? bytes-read)
                          (let [frames-read (/ bytes-read bytes-per-frame)]
-                           (reset! buffer-pos [frame-at-t (+ frame-at-t frames-read)]))
+                           (reset! buffer-pos [frame-at-t (+ frame-at-t frames-read -1)]))
                          (reset! buffer-pos starting-buffer-pos)))
                      (reset! buffer-pos starting-buffer-pos))))))
 
