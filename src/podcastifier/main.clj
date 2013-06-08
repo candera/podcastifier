@@ -136,6 +136,15 @@
     (amplitudes s t)
     (vec (repeat (channels s) 0.0))))
 
+(defn oversample
+  "Returns the mean of sampling `s` `n` steps of `delta-t` around `t`."
+  [s t n delta-t]
+  (->> (range 0 n)
+       (map #(+ t (* delta-t (double %))))
+       (map #(sample s %))
+       (reduce #(map + %1 %2))
+       (mapv #(/ % (double n)))))
+
 (defn fade-value
   "Returns the amount to fade by given a time and a `controls` spec
   like the one given to `fade`, except where the time values must have
@@ -436,7 +445,7 @@ l  seconds later."
           (.position bb 0)
           (doseq [i (range 0 bytes-to-write (* 2 channels))]
             (let [t  (byte->t (+ current-byte i))
-                  frame (sample s t)]
+                  frame (oversample s t 4 (/ 1.0 sample-rate 4.0))]
               ;;(println t frame)
               (doseq [samp frame]
                 (.putShort bb (short-sample samp)))))
@@ -475,7 +484,10 @@ l  seconds later."
                    bb (java.nio.ByteBuffer/allocate bytes-to-read)]
                (doseq [i (range 0 len bytes-per-frame)]
                  (let [t     (/ (double (+ i @bytes-read)) (* bytes-per-frame sample-rate))
-                       frame (sample s t)]
+                       ;; Oversample to smooth out some of the
+                       ;; time-jitter that I think is introducing
+                       ;; artifacts into the output a bit.
+                       frame (oversample s t 4 (/ 1.0 sample-rate 4.0))]
                    (doseq [s frame]
                      (.putShort bb (* s Short/MAX_VALUE)))))
                (.position bb 0)
