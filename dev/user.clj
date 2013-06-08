@@ -7,10 +7,11 @@
             [clojure.tools.namespace.repl :refer [refresh]]
             [podcastifier.main :refer :all])
   (:import [javax.sound.sampled
-            AudioSystem
+            AudioFileFormat$Type
             AudioFormat
             AudioFormat$Encoding
-            AudioInputStream]))
+            AudioInputStream
+            AudioSystem]))
 
 (defn init
   [])
@@ -140,6 +141,12 @@
 (def s3 (read-sound "C:/audio/craig/Led Zeppelin/Led Zeppelin II/01 Whole Lotta Love.mp3"))
 (def s4 (sinusoid 1.0 440))
 
+(def s440 (sinusoid 30 440))
+(def s880 (sinusoid 30 880))
+
+(def sin2ch (->BasicSound 30 (fn [t] [(first (sample s440 t)) (first (sample s880 t))])))
+
+(def s5 (fade s2 [[1.0 0] [0.01 10]]))
 
 (defn decoded-ais
   [path]
@@ -153,6 +160,23 @@
                                         (.getSampleRate baseFormat)
                                         false)]
     (AudioSystem/getAudioInputStream decodedFormat in)))
+
+(defn roundtrip
+  [in out]
+  (let [d (decoded-ais in)]
+    (AudioSystem/write d
+                       AudioFileFormat$Type/WAVE
+                       (io/file out))))
+
+(defn zeros
+  "Returns an infinite seq of the times where `s` is within `epsilon` of zero."
+  [s epsilon]
+  (let [channels (channels s)]
+    (->> (iterate #(+ % (/ 1 44100.0)) 0.0)
+         (map (fn [t] [t (sample s t)]))
+         (filter (fn [[t samp]] (every? #(< (Math/abs %) epsilon) samp)))
+         (map first))))
+
 
 ;; File file = new File(filename);
 ;; AudioInputStream in= AudioSystem.getAudioInputStream(file);
@@ -187,6 +211,8 @@
 (def cin (conversion-audio-input-stream (random-access-file-input-stream "bumper.wav")
                                         (.getSampleRate baseFormat)
                                         16))
+
+
 
 (let [buf (byte-array (* 2 (.getChannels baseFormat)))]
   (time (while (pos? (.read ^AudioInputStream cin buf)))))
