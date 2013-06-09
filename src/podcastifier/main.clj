@@ -6,8 +6,7 @@
             [clojure.string :as str]
             [incanter.core :as incanter]
             [incanter.charts :as charts])
-  (:import [WavFile WavFile]
-           [javax.sound.sampled AudioFormat AudioFormat$Encoding
+  (:import [javax.sound.sampled AudioFormat AudioFormat$Encoding
             AudioInputStream AudioSystem Clip
             AudioFileFormat$Type]))
 
