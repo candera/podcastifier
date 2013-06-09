@@ -139,9 +139,9 @@
   "Returns the mean of sampling `s` `n` steps of `delta-t` around `t`."
   [s t n delta-t]
   (->> (range 0 n)
-       (map #(+ t (* delta-t (double %))))
-       (map #(sample s %))
-       (reduce #(map + %1 %2))
+       (mapv #(+ t (* delta-t (double %))))
+       (mapv #(sample s %))
+       (reduce #(mapv + %1 %2))
        (mapv #(/ % (double n)))))
 
 (defn fade-value
@@ -194,13 +194,13 @@
         discard-frame-max 1000
         discard-buffer-bytes (* bytes-per-frame discard-frame-max)
         discard-buffer (byte-array discard-buffer-bytes)]
-    (loop [total-frames-read 0]
+    (loop [total-frames-read (long 0)]
       (let [frames-left-to-read (- n total-frames-read)]
         (if (pos? frames-left-to-read)
           (let [frames-to-read (min discard-frame-max frames-left-to-read)
                 bytes-to-read (* bytes-per-frame frames-to-read)
                 bytes-read (.read ais discard-buffer (int 0) (int bytes-to-read))
-                frames-read (/ bytes-read bytes-per-frame)]
+                frames-read (long (/ bytes-read bytes-per-frame))]
             (if (neg? frames-read)
               total-frames-read
               (recur (+ total-frames-read frames-read))))
@@ -211,7 +211,7 @@
   [path]
   (let [file                   (io/file path)
         in                     (atom (AudioSystem/getAudioInputStream file))
-        base-format            (.getFormat @in)
+        base-format            (.getFormat ^AudioInputStream @in)
         base-file-format       (AudioSystem/getAudioFileFormat file)
         base-file-properties   (.properties base-file-format)
         base-file-duration     (get base-file-properties "duration")
@@ -227,10 +227,13 @@
                                              (* bytes-per-sample channels)
                                              frames-per-second
                                              true)
-        din                    (atom (AudioSystem/getAudioInputStream decoded-format @in))
+        din                    (atom (AudioSystem/getAudioInputStream
+                                      decoded-format
+                                      ^AudioInputStream @in))
         decoded-length-seconds (if base-file-duration
                                  (/ base-file-duration 1000000.0)
-                                 (/ (.getFrameLength @din) frames-per-second))
+                                 (/ (.getFrameLength ^AudioInputStream @din)
+                                    frames-per-second))
         buffer-seconds         10
         buffer                 (byte-array (* frames-per-second
                                               buffer-seconds
@@ -256,10 +259,10 @@
             (let [effective-start-of-buffer (or (first @buffer-pos) -1)]
              (when (< frame-at-t effective-start-of-buffer)
                ;;(println "rewinding")
-               (.close @din)
-               (.close @in)
+               (.close ^AudioInputStream @din)
+               (.close ^AudioInputStream @in)
                (reset! in (AudioSystem/getAudioInputStream (io/file path)))
-               (reset! din (AudioSystem/getAudioInputStream decoded-format @in))
+               (reset! din (AudioSystem/getAudioInputStream decoded-format ^AudioInputStream @in))
                (reset! buffer-pos starting-buffer-pos)))
 
             ;; Desired position is past the end of the buffered region.
@@ -298,8 +301,8 @@
 
       java.io.Closeable
       (close [this]
-        (.close @din)
-        (.close @in)))))
+        (.close ^AudioInputStream @din)
+        (.close ^AudioInputStream @in)))))
 
 ;;; Sound manipulation
 
@@ -307,7 +310,7 @@
   "Turns a sound into a two-channel sound. Currently works only on
   one- and two-channel inputs."
   [s]
-  (case (channels s)
+  (case (long (channels s))
     1 (->BasicSound (duration s) (fn [^double t] (let [x (sample s t)] [x x])))
     2 s
     (throw (ex-info "Can't stereoize sounds with other than one or two channels"
@@ -482,7 +485,7 @@ l  seconds later."
       (markSupported [] true)
       (read ^int
         ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
-        ([buf] (read this buf 0 (alength buf)))
+        ([^bytes buf] (read this buf 0 (alength buf)))
         ([^bytes buf off len]
            (if (<= total-bytes @bytes-read)
              -1
