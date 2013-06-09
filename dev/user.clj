@@ -136,17 +136,18 @@
      decoded-format
      original-ais)))
 
-(def s1 (read-sound "bumper.wav"))
-(def s2 (read-sound "bumper-music.mp3"))
-(def s3 (read-sound "C:/audio/craig/Led Zeppelin/Led Zeppelin II/01 Whole Lotta Love.mp3"))
-(def s4 (sinusoid 1.0 440))
+(comment
+  (def s1 (read-sound "bumper.wav"))
+  (def s2 (read-sound "bumper-music.mp3"))
+  (def s3 (read-sound "C:/audio/craig/Led Zeppelin/Led Zeppelin II/01 Whole Lotta Love.mp3"))
+  (def s4 (sinusoid 1.0 440))
 
-(def s440 (sinusoid 30 440))
-(def s880 (sinusoid 30 880))
+  (def s440 (sinusoid 30 440))
+  (def s880 (sinusoid 30 880))
 
-(def sin2ch (->BasicSound 30 (fn [t] [(first (sample s440 t)) (first (sample s880 t))])))
+  (def sin2ch (->BasicSound 30 (fn [t] [(first (sample s440 t)) (first (sample s880 t))])))
 
-(def s5 (fade s2 [[1.0 0] [0.01 10]]))
+  (def s5 (fade s2 [[1.0 0] [0.01 10]])))
 
 (defn decoded-ais
   [path]
@@ -164,7 +165,7 @@
 (defn roundtrip
   [in out]
   (let [d (decoded-ais in)]
-    (AudioSystem/write d
+    (AudioSystem/write ^AudioInputStream d
                        AudioFileFormat$Type/WAVE
                        (io/file out))))
 
@@ -174,9 +175,16 @@
   (let [channels (channels s)]
     (->> (iterate #(+ % (/ 1 44100.0)) 0.0)
          (map (fn [t] [t (sample s t)]))
-         (filter (fn [[t samp]] (every? #(< (Math/abs %) epsilon) samp)))
+         (filter (fn [[t samp]] (every? #(< (Math/abs ^double %) epsilon) samp)))
          (map first))))
 
+(defn peak
+  "Returns the maximum absolute amplitude of `s` when sampled at `sample-rate`."
+  [s sample-rate]
+  (->> (range 0 (duration s) (/ 1.0 sample-rate))
+       (mapcat #(sample s %))
+       (map #(if (neg? %) (* -1.0 %) %))
+       (reduce #(max %1 %2))))
 
 ;; File file = new File(filename);
 ;; AudioInputStream in= AudioSystem.getAudioInputStream(file);
