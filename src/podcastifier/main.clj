@@ -432,10 +432,9 @@ l  seconds later."
   (let [f* (-> f (min 1.0) (max -1.0))]
     (short (* Short/MAX_VALUE f))))
 
-;; TODO: There some crackle in the playback. Figure out why and kill
-;; it. Maybe oversample?
 (defn play
-  "Plays `sound`. May return before sound has finished playing."
+  "Plays `sound` asynchronously. Returns a function that, when called,
+  will stop the sound playing."
   [s]
   (let [sample-rate  44100
         channels     (channels s)
@@ -447,22 +446,27 @@ l  seconds later."
         buffer-bytes (* sample-rate channels) ;; Half-second
         bb           (java.nio.ByteBuffer/allocate buffer-bytes)
         total-bytes  (-> s duration (* sample-rate) long (* channels 2))
-        byte->t      (fn [n] (-> n double (/ sample-rate channels 2)))]
-    (.open sdl)
-    (loop [current-byte 0]
-      (when (< current-byte total-bytes)
-        (let [bytes-remaining (- total-bytes current-byte)
-              bytes-to-write (min bytes-remaining buffer-bytes)]
-          (.position bb 0)
-          (doseq [i (range 0 bytes-to-write (* 2 channels))]
-            (let [t  (byte->t (+ current-byte i))
-                  frame (oversample s t 4 (/ 1.0 sample-rate 4.0))]
-              ;;(println t frame)
-              (doseq [samp frame]
-                (.putShort bb (short-sample samp)))))
-          (let [bytes-written (.write sdl (.array bb) 0 bytes-to-write)]
-            (.start sdl)                ; Repeated calls are harmless
-            (recur (+ current-byte bytes-written))))))))
+        byte->t      (fn [n] (-> n double (/ sample-rate channels 2)))
+        stopped      (atom false)]
+    (future
+      (.open sdl)
+      (loop [current-byte 0]
+        (when (or @stopped (< current-byte total-bytes))
+          (let [bytes-remaining (- total-bytes current-byte)
+                bytes-to-write (min bytes-remaining buffer-bytes)]
+            (.position bb 0)
+            (doseq [i (range 0 bytes-to-write (* 2 channels))]
+              (let [t  (byte->t (+ current-byte i))
+                    frame (oversample s t 4 (/ 1.0 sample-rate 4.0))]
+                ;;(println t frame)
+                (doseq [samp frame]
+                  (.putShort bb (short-sample samp)))))
+            (let [bytes-written (.write sdl (.array bb) 0 bytes-to-write)]
+              (when-not @stopped (.start sdl))       ; Repeated calls are harmless
+              (recur (+ current-byte bytes-written)))))))
+    (fn []
+      (reset! stopped true)
+      (.stop sdl))))
 
 
 ;;; Serialization
