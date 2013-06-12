@@ -186,6 +186,46 @@
        (map #(if (neg? %) (* -1.0 %) %))
        (reduce #(max %1 %2))))
 
+(def config (read-config "episode.edn"))
+
+(def voices-config (:voices config))
+(def intro-config (-> config :music :intro))
+
+(defn voices
+  "Returns a Sound for the voices part of the podcast given `voices-config`."
+  [voices-config]
+  (let [{:keys [start end pan?]
+         fade-duration :fade-in} voices-config
+        pan-f (if pan? #(pan % 0.4) identity)]
+    (-> voices-config
+        :both
+        read-sound
+        pan-f
+        (trim (subtract-time start fade-duration) end)
+        (fade-in fade-duration))))
+
+(defn intro-music
+  "Returns a Sound for the intro-music part of the podcast given
+  `intro-config` and `voices-config`."
+  [voices-config intro-config]
+  (let [intro-soft-start  (add-time (:full-volume-length intro-config)
+                                    (:fade-in voices-config))
+
+        intro-soft-end    (add-time intro-soft-start
+                                    (subtract-time (:intro-music-fade voices-config)
+                                                   (:start voices-config)))
+        intro-end         (add-time intro-soft-end (:fade-out intro-config))]
+    (-> intro-config
+        :file
+        read-sound
+        #_(fade
+         [[1.0 (:full-volume-length intro-config)]
+          [(:fade-amount intro-config) intro-soft-start]
+          [(:fade-amount intro-config) intro-soft-end]
+          [0.0 intro-end]])
+        (trim 0.0 intro-end))))
+
+
 ;; File file = new File(filename);
 ;; AudioInputStream in= AudioSystem.getAudioInputStream(file);
 ;; AudioInputStream din = null;

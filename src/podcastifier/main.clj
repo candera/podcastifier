@@ -114,11 +114,6 @@
   (duration [this] (:duration this))
   (amplitudes [this t] ((:sampler this) t)))
 
-(defn null-sound
-  "Returns a zero-duration sound with one channel."
-  []
-  (->BasicSound 0.0 (constantly [0.0])))
-
 (defn channels
   "Return the number of channels in `sound`."
   [s]
@@ -143,6 +138,19 @@
        (mapv #(sample s %))
        (reduce #(mapv + %1 %2))
        (mapv #(/ % (double n)))))
+
+;;; Sound construction
+
+(defn sound
+  "Creates a sound `duration` seconds long whose amplitudes are
+  produced by `f`."
+  [duration f]
+  (->BasicSound duration f))
+
+(defn null-sound
+  "Returns a zero-duration sound with one channel."
+  []
+  (sound 0.0 (constantly [0.0])))
 
 (defn fade-value
   "Returns the amount to fade by given a time and a `controls` spec
@@ -171,18 +179,33 @@
 (defn sinusoid
   "Returns a single-channel sound of `duration` and `frequency`."
   [duration ^double frequency]
-  (->BasicSound duration
-                (fn [^double t]
-                  [(Math/sin (* t frequency 2.0 Math/PI))])))
+  (sound duration
+         (fn [^double t]
+           [(Math/sin (* t frequency 2.0 Math/PI))])))
 
 (defn square-wave
   "Produces a single-channel sound that toggles between 1.0 and -1.0
   at frequency `freq`."
   [duration freq]
-  (->BasicSound duration
-                (fn [t]
-                  (let [x (-> t (* freq 2.0) long)]
-                    (if (even? x) [1.0] [-1.0])))))
+  (sound duration
+         (fn [t]
+           (let [x (-> t (* freq 2.0) long)]
+             (if (even? x) [1.0] [-1.0])))))
+
+(defn linear
+  "Produces a `n`-channel (default 1) sound whose samples move linearly
+  from `start` to `end` over `duration`."
+  ([^double duration ^double start ^double end] (linear duration start end 1))
+  ([^double duration ^double start ^double end n]
+     (let [span (double (- end start))]
+       (sound duration
+              (fn [^double t]
+                (repeat n (+ start (* span (/ t duration)))))))))
+
+(defn silence
+  "Creates a `n`-channel sound (default 1) that is `duration` long but silent."
+  ([duration] (silence duration 1))
+  ([duration n] (sound duration (constantly (repeat n 0.0)))))
 
 ;;; File-based Sound
 
@@ -306,46 +329,33 @@
 
 ;;; Sound manipulation
 
+(defn multiplex
+  "Turns a single-channel sound into a sound with the same signal on
+  `n` channels."
+  [s n]
+  {:pre [(= 1 (channels s))]}
+  (if (= (channels s) n)
+    s
+    (sound (duration s)
+           (fn [t] (repeat n (first (sample s t)))))))
+
 (defn ->stereo
   "Turns a sound into a two-channel sound. Currently works only on
   one- and two-channel inputs."
   [s]
   (case (long (channels s))
-    1 (->BasicSound (duration s) (fn [^double t] (let [x (sample s t)] [x x])))
+    1 (multiplex s 2)
     2 s
     (throw (ex-info "Can't stereoize sounds with other than one or two channels"
                     {:reason :cant-stereoize-channels :s s}))))
 
-(defn fade
-  "Given `s` returns a new sound whose gain has been adjusted
-  smoothly between the [gain time] points in `controls`, where gain is
-  between 0.0 and 1.0 (inclusive) and time is as described below.
-  There are implicit control points at the beginning of the audio with
-  a gain of 1.0 and at the end of the audio with the last gain
-  specified.
-
-  Times can be specified as a number, interpreted as seconds, as a
-  vector of numbers, interpreted as [hours minutes seconds], or as a
-  string, which must be of the form \"hh:mm:ss.sss\".
-
-  Example: (fade \"foo.wav\" \"bar.wav\" [[0 0] [1 14.5]]) would fade
-  the audio in smoothly until 14.5 seconds in, then stay at full
-  volume for the resnt of the file.
-
-  Example: (fade \"foo.wav\" \"bar.wav\" [[1.0 0]
-                                          [0.2 12.0]
-                                          [0.2 \"00:01:30\"]
-                                          [0 \"00:01:45\"]])
-
-  would start at full volume, fade down to 20% volume at 12 seconds,
-  stay there until 90 seconds in, and then fade out completely by 15
-l  seconds later."
-  [s controls]
-  (let [normalized-controls (mapv (fn [[v t]] [v (normalize-time t)]) controls)]
-    (->BasicSound (duration s)
-                  (fn [t]
-                    (mapv #(* (fade-value t controls) %)
-                          (sample s t))))))
+(defn multiply
+  [s1 s2]
+  "Multiplies two sounds together to produce a new one. Sounds must
+  have the same number of channels."
+  {:pre [(= (channels s1) (channels s2))]}
+  (sound (min (duration s1) (duration s2))
+         (fn [t] (mapv * (sample s1 t) (sample s2 t)))))
 
 (defn pan
   "Takes a two-channel sound and mixes the channels together by
@@ -357,71 +367,77 @@ l  seconds later."
   [s amount]
   {:pre [(= 2 (channels s))]}
   (let [amount-complement (- 1.0 amount)]
-    (->BasicSound (duration s)
-                  (fn [t]
-                    (let [[a b] (sample s t)]
-                      [(+ (* a amount-complement)
-                          (* b amount))
-                       (+ (* a amount)
-                          (* b amount-complement))])))))
+    (sound (duration s)
+           (fn [t]
+             (let [[a b] (sample s t)]
+               [(+ (* a amount-complement)
+                   (* b amount))
+                (+ (* a amount)
+                   (* b amount-complement))])))))
 
 (defn trim
   "Truncates `s` to the region between `start` and `end`."
   [s start end]
-  (->BasicSound (- end start)
-                (fn [^double t] (sample s (+ t start)))))
-
-(defn fade-in
-  "Fades `s` linearly from zero at the beginning to full volume at
-  `duration`."
-  [s duration]
-  (fade s [[0 0] [1.0 duration]]))
-
-(defn fade-out
-  "Fades the s to zero for the last `duration`."
-  [s duration]
-  (let [end (:duration s)]
-    (fade s [[1.0 (- end duration)] [0.0 end]])))
+  (sound (- end start)
+         (fn [^double t] (sample s (+ t start)))))
 
 (defn mix
   "Mixes files `s1` and `s2`."
   [s1 s2]
-  (->BasicSound (max (duration s1) (duration s2))
-                (fn [t]
-                  (mapv + (sample s1 t) (sample s2 t)))))
+  (sound (max (duration s1) (duration s2))
+         (fn [t]
+           (mapv + (sample s1 t) (sample s2 t)))))
+
+(defn append
+  "Concatenates sounds together."
+  [s1 s2]
+  (let [d1 (duration s1)
+        d2 (duration s2)]
+    (sound (+ d1 d2)
+           (fn [^double t]
+             (if (<= t d1)
+               (sample s1 t)
+               (sample s2 (- t d1)))))))
 
 (defn timeshift
   "Inserts `amount` seconds of silence at the beginning of `s`"
   [s amount]
-  (let [channels (channels s)]
-   (->BasicSound (+ (duration s) amount)
-                 (fn [^double t] (if (< t amount)
-                                   (vec (repeat channels 0.0))
-                                   (sample s (- t amount)))))))
+  (append (silence amount (channels s)) s))
 
-(defn- input-for-t
-  "Given a seq of [start-time end-time sound] tuples, return the tuple
-  with a `t` that falls between the `start-time` and `end-time`.
-  Assumes the tuples are sorted in time order with no overlap."
-  [input-descriptions t]
-  (or (first (filter (fn [[start end input]] (<= start t end)) input-descriptions))
-      (null-sound)))
+(defn fade-in
+  "Fades `s` linearly from zero at the beginning to full volume at
+  `duration`."
+  [s fade-duration]
+  #_(multiply s (append (linear fade-duration 0 1.0) (linear (duration s) 1.0 1.0)))
+  (multiply s (linear (duration s) 1.0 1.0 (channels s))))
 
-(defn append
-  "Concatenates inputs together."
-  [& inputs]
-  (let [end-times (->> inputs (map duration) (reductions +))
-        start-times (concat [0.0] end-times)
-        input-descriptions (map vector start-times end-times inputs)]
-    (->BasicSound (last end-times)
-                  (fn [^double t]
-                    (let [[start end input] (input-for-t input-descriptions t)]
-                      (sample input (- t start)))))))
+(defn fade-out
+  "Fades the s to zero for the last `duration`."
+  [s fade-duration]
+  (multiply s (append (linear (- (duration s) fade-duration) 1.0 1.0)
+                      (linear fade-duration 1.0 0.0))))
 
-(defn silence
-  "Creates a single-channel sound that is `duration` long but silent."
-  [duration]
-  (->BasicSound duration (constantly [0.0])))
+(defn segmented-linear
+  "Produces a single-channels sound whose amplitudes change linear as
+  described by `spec`. Spec is a sequence of interleaved amplitudes
+  and durations. For example the spec
+
+  1.0 30
+  0   10
+  0   0.5
+  1.0
+
+  (written that way on purpose - durations and amplitudes are in columns)
+  would produce a sound whose amplitude starts at 1.0, linearly
+  changes to 0.0 at time 30, stays at 0 for 10 seconds, then ramps up
+  to its final value of 1.0 over 0.5 seconds"
+  [& spec]
+  {:pre [(and (odd? (count spec))
+              (< 3 (count spec)))]}
+  (->> spec
+       (partition 3 2)
+       (map (fn [[start duration end]] (linear duration start end)))
+       (reduce append)))
 
 ;;; Playback
 
@@ -451,7 +467,7 @@ l  seconds later."
     (future
       (.open sdl)
       (loop [current-byte 0]
-        (when (or @stopped (< current-byte total-bytes))
+        (when (and (not @stopped) (< current-byte total-bytes))
           (let [bytes-remaining (- total-bytes current-byte)
                 bytes-to-write (min bytes-remaining buffer-bytes)]
             (.position bb 0)
@@ -537,82 +553,127 @@ l  seconds later."
                                             duration
                                             :step-size (/ duration 4000.0))))))
 
+;;; Podcast production
+
+(defn read-config
+  "Reads the podcast configuration file at `path` and returns the
+  corresponding data structure."
+  [path]
+  (edn/read
+   {:readers (merge default-data-readers
+                    {'duration normalize-time})}
+   (-> path io/reader (java.io.PushbackReader.) )))
+
 (defn -main
   "Entry point for the application"
   [config-path]
-  #_(let [config (-> config-path io/reader (java.io.PushbackReader.) edn/read)]
-    (let [pan-f (if (-> config :voices :pan?) pan identity)
-          voice (-> config :voices :both
-                    pan-f
-                    (trim
-                     (subtract-time
-                      (-> config :voices :start)
-                      (-> config :voices :fade-in))
-                     (-> config :voices :end))
-                    (fade-in
-                     (-> config :voices :fade-in)))
-          voice-rate (rate voice)
-          intro-soft-start (add-time (-> config :music :intro :full-volume-length)
-                                     (-> config :voices :fade-in))
-          intro-soft-end (add-time intro-soft-start
-                                   (subtract-time (-> config :voices :intro-music-fade)
-                                                  (-> config :voices :start)))
-          intro-end (add-time intro-soft-end (-> config :music :intro :fade-out))
-          intro (-> config :music :intro :file
-                    (to-wav voice-rate)
-                    (fade
-                     [[1.0 (-> config :music :intro :full-volume-length)]
-                      [(-> config :music :intro :fade-amount) intro-soft-start]
-                      [(-> config :music :intro :fade-amount) intro-soft-end]
-                      [0.0 intro-end]])
-                    (trim 0.0 intro-end))
-          outro-fade-up-start (subtract-time (-> config :voices :end)
-                                             (-> config :voices :outro-music-start))
-          outro-fade-up-end (add-time outro-fade-up-start
-                                      (-> config :music :outro :fade-up))
-          outro-fade-out-start (add-time outro-fade-up-end
-                                         (-> config :music :outro :full-volume-length))
-          outro-fade-out-end (add-time outro-fade-out-start
-                                       (-> config :music :outro :fade-out))
-          outro (-> config :music :outro :file
-                    (to-wav voice-rate)
-                    (fade
-                     [[(-> config :music :outro :fade-amount) 0]
-                      [(-> config :music :outro :fade-amount) outro-fade-up-start]
-                      [1.0 outro-fade-up-end]
-                      [1.0 outro-fade-out-start]
-                      [0.0 outro-fade-out-end]])
-                    (match-sample-rate voice)
-                    (trim 0.0 outro-fade-out-end))
-          outro-music-start (-> (-> config :voices :outro-music-start)
-                                (subtract-time (-> config :voices :start))
-                                (add-time (-> config :voices :fade-in)))
-          voice-with-outro (mix voice outro outro-music-start)
-          voice-with-intro (mix intro voice-with-outro
-                                (-> config :music :intro :full-volume-length))
-          bumper-length (length (-> config :bumper))
-          bumper-music-start (-> config :music :bumper :start-at)
-          bumper-music-fade-start (add-time bumper-music-start bumper-length)
-          bumper-music-end (add-time bumper-music-fade-start
-                                     (-> config :music :bumper :fade-out))
-          bumper-fade (-> config :music :bumper :fade-amount)
-          bumper-music (-> config :music :bumper :file
-                           (to-wav voice-rate)
-                           (trim bumper-music-start bumper-music-end)
-                           (fade [[bumper-fade 0.0]
-                                  [bumper-fade bumper-length]
-                                  [0.0 (add-time bumper-length
-                                                 (-> config :music :bumper :fade-out))]]))
-          bumper-with-music (-> config :bumper
-                                (to-wav voice-rate)
-                                (mix bumper-music 0.0))
-          final (append bumper-with-music
-                        (silence voice 1)
-                        (to-wav (-> config :bloops :bumper) voice-rate)
-                        (silence voice 3)
-                        voice-with-intro
-                        (silence voice 2)
-                        (to-wav (-> config :bloops :end) voice-rate))]
-      {:bumper-with-music bumper-with-music
-       :voice-with-intro voice-with-intro
-       :final final})))
+  (let [config               (read-config config-path)
+        bumper               (read-sound (-> config :bumper))
+        intro-music          (read-sound (-> config :music :intro :file))
+        outro-music          (read-sound (-> config :music :outro :file))
+        bumper-music         (read-sound (-> config :music :bumper :file))
+        bumper-bloop         (read-sound (-> config :bloops :bumper))
+        end-bloop            (read-sound (-> config :bloops :end))
+
+
+
+        ;; outro-fade-up-start  (subtract-time (-> config :voices :end)
+        ;;                                     (-> config :voices :outro-music-start))
+        ;; outro-fade-up-end    (add-time outro-fade-up-start
+        ;;                                (-> config :music :outro :fade-up))
+        ;; outro-fade-out-start (add-time outro-fade-up-end
+        ;;                                (-> config :music :outro :full-volume-length))
+        ;; outro-fade-out-end   (add-time outro-fade-out-start
+        ;;                                (-> config :music :outro :fade-out))
+        ;; outro                (-> config :music :outro :file
+        ;;                          (to-wav voice-rate)
+        ;;                          (fade
+        ;;                           [[(-> config :music :outro :fade-amount) 0]
+        ;;                            [(-> config :music :outro :fade-amount) outro-fade-up-start]
+        ;;                            [1.0 outro-fade-up-end]
+        ;;                            [1.0 outro-fade-out-start]
+        ;;                            [0.0 outro-fade-out-end]])
+        ;;                          (match-sample-rate voice)
+        ;;                          (trim 0.0 outro-fade-out-end))
+        final nil
+        ]
+    (save final "episode.wav" 44100)
+
+    )
+
+  #_(let [config ]
+      (let [
+            voice (-> config :voices :both
+                      pan-f
+                      (trim
+                       (subtract-time
+                        (-> config :voices :start)
+                        (-> config :voices :fade-in))
+                       (-> config :voices :end))
+                      (fade-in
+                       (-> config :voices :fade-in)))
+            voice-rate (rate voice)
+            intro-soft-start (add-time (-> config :music :intro :full-volume-length)
+                                       (-> config :voices :fade-in))
+            intro-soft-end (add-time intro-soft-start
+                                     (subtract-time (-> config :voices :intro-music-fade)
+                                                    (-> config :voices :start)))
+            intro-end (add-time intro-soft-end (-> config :music :intro :fade-out))
+            intro (-> config :music :intro :file
+                      (to-wav voice-rate)
+                      (fade
+                       [[1.0 (-> config :music :intro :full-volume-length)]
+                        [(-> config :music :intro :fade-amount) intro-soft-start]
+                        [(-> config :music :intro :fade-amount) intro-soft-end]
+                        [0.0 intro-end]])
+                      (trim 0.0 intro-end))
+            outro-fade-up-start (subtract-time (-> config :voices :end)
+                                               (-> config :voices :outro-music-start))
+            outro-fade-up-end (add-time outro-fade-up-start
+                                        (-> config :music :outro :fade-up))
+            outro-fade-out-start (add-time outro-fade-up-end
+                                           (-> config :music :outro :full-volume-length))
+            outro-fade-out-end (add-time outro-fade-out-start
+                                         (-> config :music :outro :fade-out))
+            outro (-> config :music :outro :file
+                      (to-wav voice-rate)
+                      (fade
+                       [[(-> config :music :outro :fade-amount) 0]
+                        [(-> config :music :outro :fade-amount) outro-fade-up-start]
+                        [1.0 outro-fade-up-end]
+                        [1.0 outro-fade-out-start]
+                        [0.0 outro-fade-out-end]])
+                      (match-sample-rate voice)
+                      (trim 0.0 outro-fade-out-end))
+            outro-music-start (-> (-> config :voices :outro-music-start)
+                                  (subtract-time (-> config :voices :start))
+                                  (add-time (-> config :voices :fade-in)))
+            voice-with-outro (mix voice outro outro-music-start)
+            voice-with-intro (mix intro voice-with-outro
+                                  (-> config :music :intro :full-volume-length))
+            bumper-length (length (-> config :bumper))
+            bumper-music-start (-> config :music :bumper :start-at)
+            bumper-music-fade-start (add-time bumper-music-start bumper-length)
+            bumper-music-end (add-time bumper-music-fade-start
+                                       (-> config :music :bumper :fade-out))
+            bumper-fade (-> config :music :bumper :fade-amount)
+            bumper-music (-> config :music :bumper :file
+                             (to-wav voice-rate)
+                             (trim bumper-music-start bumper-music-end)
+                             (fade [[bumper-fade 0.0]
+                                    [bumper-fade bumper-length]
+                                    [0.0 (add-time bumper-length
+                                                   (-> config :music :bumper :fade-out))]]))
+            bumper-with-music (-> config :bumper
+                                  (to-wav voice-rate)
+                                  (mix bumper-music 0.0))
+            final (append bumper-with-music
+                          (silence voice 1)
+                          (to-wav (-> config :bloops :bumper) voice-rate)
+                          (silence voice 3)
+                          voice-with-intro
+                          (silence voice 2)
+                          (to-wav (-> config :bloops :end) voice-rate))]
+        {:bumper-with-music bumper-with-music
+         :voice-with-intro voice-with-intro
+         :final final})))
