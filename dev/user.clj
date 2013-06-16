@@ -5,6 +5,7 @@
             [clojure.pprint :refer [pprint]]
             [clojure.repl :refer [doc pst]]
             [clojure.tools.namespace.repl :refer [refresh]]
+            [dynne.sound :refer :all]
             [podcastifier.main :refer :all])
   (:import [javax.sound.sampled
             AudioFileFormat$Type
@@ -20,12 +21,12 @@
   []
   (init))
 
-(defn stop
-  [])
+(defn user-stop
+   [])
 
 (defn reset
   []
-  (stop)
+  (user-stop)
   (refresh :after 'user/init))
 
 (defn config
@@ -35,69 +36,6 @@
 ;; (defn main
 ;;   []
 ;;   (main/-main "example-config.edn"))
-
-(defn sin-f
-  [freq]
-  (fn [t]
-    [(-> t (* freq) (* Math/PI 2.0) Math/sin)]))
-
-(defn play-f
-  [f duration]
-  (let [sample-rate 44000
-        channels 1
-        sdl (AudioSystem/getSourceDataLine (AudioFormat. sample-rate
-                                                         16
-                                                         channels
-                                                         true
-                                                         true))
-        buffer-bytes (* sample-rate channels) ;; Half-second
-        bb (java.nio.ByteBuffer/allocate buffer-bytes)
-        total-bytes (-> duration (* sample-rate) long (* channels 2))]
-    (.open sdl)
-    (.start sdl)
-    (loop [current-byte 0]
-      (when (< current-byte total-bytes)
-        (let [bytes-remaining (- total-bytes current-byte)
-              bytes-to-write (min bytes-remaining buffer-bytes)]
-          (.position bb 0)
-          (doseq [i (range 0 (/ bytes-to-write 2 channels))]
-            (.putShort bb (-> i
-                              (+ current-byte)
-                              double
-                              (/ sample-rate channels 2)
-                              f
-                              first
-                              (* Short/MAX_VALUE))))
-          (recur (+ current-byte (.write sdl (.array bb) 0 bytes-to-write))))))))
-
-
-(defn play-f2
-  [f duration]
-  (let [sample-rate  44000
-        channels     1
-        sdl          (AudioSystem/getSourceDataLine (AudioFormat. sample-rate
-                                                                  16
-                                                                  channels
-                                                                  true
-                                                                  true))
-        buffer-bytes (* sample-rate channels) ;; Half-second
-        bb           (java.nio.ByteBuffer/allocate buffer-bytes)
-        total-bytes  (-> duration (* sample-rate) long (* channels 2))
-        byte->t      (fn [n] (-> n double (/ sample-rate channels 2)))]
-    (.open sdl)
-    ;;(.start sdl)
-    (loop [current-byte 0]
-      (when (< current-byte total-bytes)
-        (let [bytes-remaining (- total-bytes current-byte)
-              bytes-to-write (min bytes-remaining buffer-bytes)]
-          (.position bb 0)
-          (doseq [i (range 0 bytes-to-write (* 2 channels))]
-            (let [frame (f (byte->t (+ current-byte i)))]
-              (doseq [samp frame]
-                (.putShort bb (short-sample samp)))))
-          (let [bytes-written (.write sdl (.array bb) 0 bytes-to-write)]
-            (.start sdl)                ; Repeated calls are harmless
-            (recur (+ current-byte bytes-written))))))))
 
 ;;; Reading from files
 
@@ -169,6 +107,14 @@
                        AudioFileFormat$Type/WAVE
                        (io/file out))))
 
+(defn consume
+  "Rip through an AudioInputStream, consuming buflen bytes at a time, if possible"
+  [^AudioInputStream ais buflen]
+  (let [buffer (byte-array buflen)]
+    (while (not (neg? (.read ais buffer))))))
+
+
+
 (defn zeros
   "Returns an infinite seq of the times where `s` is within `epsilon` of zero."
   [s epsilon]
@@ -178,53 +124,33 @@
          (filter (fn [[t samp]] (every? #(< (Math/abs ^double %) epsilon) samp)))
          (map first))))
 
-(defn peak
-  "Returns the maximum absolute amplitude of `s` when sampled at `sample-rate`."
-  [s sample-rate]
-  (->> (range 0 (duration s) (/ 1.0 sample-rate))
-       (mapcat #(sample s %))
-       (map #(if (neg? %) (* -1.0 %) %))
-       (reduce #(max %1 %2))))
 
 (def config (read-config "episode.edn"))
 
-(def voices-config (:voices config))
-(def intro-config (-> config :music :intro))
+;; (def voices-config (:voices config))
+;; (def intro-config (-> config :music :intro))
 
-(defn voices
-  "Returns a Sound for the voices part of the podcast given `voices-config`."
-  [voices-config]
-  (let [{:keys [start end pan?]
-         fade-duration :fade-in} voices-config
-        pan-f (if pan? #(pan % 0.4) identity)]
-    (-> voices-config
-        :both
-        read-sound
-        pan-f
-        (trim (subtract-time start fade-duration) end)
-        (fade-in fade-duration))))
 
-(defn intro-music
-  "Returns a Sound for the intro-music part of the podcast given
-  `intro-config` and `voices-config`."
-  [voices-config intro-config]
-  (let [intro-soft-start  (add-time (:full-volume-length intro-config)
-                                    (:fade-in voices-config))
+;; (def i (intro-music voices-config intro-config))
+;; (def v (voices voices-config))
 
-        intro-soft-end    (add-time intro-soft-start
-                                    (subtract-time (:intro-music-fade voices-config)
-                                                   (:start voices-config)))
-        intro-end         (add-time intro-soft-end (:fade-out intro-config))]
-    (-> intro-config
-        :file
-        read-sound
-        #_(fade
-         [[1.0 (:full-volume-length intro-config)]
-          [(:fade-amount intro-config) intro-soft-start]
-          [(:fade-amount intro-config) intro-soft-end]
-          [0.0 intro-end]])
-        (trim 0.0 intro-end))))
+;; (def v+i
+;;   (-> v
+;;       (timeshift (-> intro-config :full-volume-length))
+;;       (mix i)))
 
+(defn oversample-all
+  "Oversample all of s, for performance measurement purposes."
+  [s]
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        max-t (duration s)]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         ;;(sample s t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t)))))))
 
 ;; File file = new File(filename);
 ;; AudioInputStream in= AudioSystem.getAudioInputStream(file);
