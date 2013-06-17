@@ -158,19 +158,17 @@
   "Returns a sound for the outro-music part of the podcast given
   `outro-config` and `voices-config`"
   [voices-config outro-config]
-  (let [
-        ;; outro-fade (segmented-linear
-        ;;             (:fade-amount outro-config) (- (:end voices-config)
-        ;;                                            (:outro-music-start voices-config))
-        ;;             (:fade-amount outro-config) (:fade-up outro-config)
-        ;;             1.0 
-        ;;             1.0                        (:full-volume-length outro-config)
-        ;;            .0)
-        ]
-   (-> outro-config
-       :file
-       read-sound
-       )))
+  (let [outro-fade (segmented-linear
+                    (:fade-amount outro-config) (- (:end voices-config)
+                                                   (:outro-music-start voices-config))
+                    (:fade-amount outro-config) (:fade-up outro-config)
+                    1.0                         (:full-volume-length outro-config)
+                    1.0                         (:fade-out outro-config)
+                    0.0)]
+    (-> outro-config
+        :file
+        read-sound
+        (multiply outro-fade))))
 
 (defn normalize
   "Returns a version of s scaled so that the peak absoute amplitude is
@@ -194,7 +192,6 @@
         (mix b)
         normalize)))
 
-
 (defn -main
   "Entry point for the application"
   [config-path]
@@ -204,113 +201,20 @@
         outro-config  (-> config :music :outro)
         v             (voices voices-config)
         i             (intro-music voices-config intro-config)
-        v+i           (-> v
+        o             (outro-music voices-config outro-config)
+        ivo           (-> v
+                          (mix (timeshift o (-> voices-config :outro-music-start)))
                           (timeshift (-> intro-config :full-volume-length))
                           (mix i))
-        bumper        (bumper (:bumper config) (-> config :music "bumper"))
+        bumper        (bumper (:bumper config) (-> config :music :bumper))
         bumper-bloop  (-> config :bloops :bumper read-sound)
         end-bloop     (-> config :bloops :end read-sound)
-        o-music       (outro-music voices-config outro-config)
-
-
-
-        ;; outro-fade-up-start  (subtract-time (-> config :voices :end)
-        ;;                                     (-> config :voices :outro-music-start))
-        ;; outro-fade-up-end    (add-time outro-fade-up-start
-        ;;                                (-> config :music :outro :fade-up))
-        ;; outro-fade-out-start (add-time outro-fade-up-end
-        ;;                                (-> config :music :outro :full-volume-length))
-        ;; outro-fade-out-end   (add-time outro-fade-out-start
-        ;;                                (-> config :music :outro :fade-out))
-        ;; outro                (-> config :music :outro :file
-        ;;                          (to-wav voice-rate)
-        ;;                          (fade
-        ;;                           [[(-> config :music :outro :fade-amount) 0]
-        ;;                            [(-> config :music :outro :fade-amount) outro-fade-up-start]
-        ;;                            [1.0 outro-fade-up-end]
-        ;;                            [1.0 outro-fade-out-start]
-        ;;                            [0.0 outro-fade-out-end]])
-        ;;                          (match-sample-rate voice)
-        ;;                          (trim 0.0 outro-fade-out-end))
-        final         nil
-        ]
-    (save final "episode.wav" 44100)
-
-    )
-
-  #_(let [config ]
-      (let [
-            voice (-> config :voices :both
-                      pan-f
-                      (trim
-                       (subtract-time
-                        (-> config :voices :start)
-                        (-> config :voices :fade-in))
-                       (-> config :voices :end))
-                      (fade-in
-                       (-> config :voices :fade-in)))
-            voice-rate (rate voice)
-            intro-soft-start (add-time (-> config :music :intro :full-volume-length)
-                                       (-> config :voices :fade-in))
-            intro-soft-end (add-time intro-soft-start
-                                     (subtract-time (-> config :voices :intro-music-fade)
-                                                    (-> config :voices :start)))
-            intro-end (add-time intro-soft-end (-> config :music :intro :fade-out))
-            intro (-> config :music :intro :file
-                      (to-wav voice-rate)
-                      (fade
-                       [[1.0 (-> config :music :intro :full-volume-length)]
-                        [(-> config :music :intro :fade-amount) intro-soft-start]
-                        [(-> config :music :intro :fade-amount) intro-soft-end]
-                        [0.0 intro-end]])
-                      (trim 0.0 intro-end))
-            outro-fade-up-start (subtract-time (-> config :voices :end)
-                                               (-> config :voices :outro-music-start))
-            outro-fade-up-end (add-time outro-fade-up-start
-                                        (-> config :music :outro :fade-up))
-            outro-fade-out-start (add-time outro-fade-up-end
-                                           (-> config :music :outro :full-volume-length))
-            outro-fade-out-end (add-time outro-fade-out-start
-                                         (-> config :music :outro :fade-out))
-            outro (-> config :music :outro :file
-                      (to-wav voice-rate)
-                      (fade
-                       [[(-> config :music :outro :fade-amount) 0]
-                        [(-> config :music :outro :fade-amount) outro-fade-up-start]
-                        [1.0 outro-fade-up-end]
-                        [1.0 outro-fade-out-start]
-                        [0.0 outro-fade-out-end]])
-                      (match-sample-rate voice)
-                      (trim 0.0 outro-fade-out-end))
-            outro-music-start (-> (-> config :voices :outro-music-start)
-                                  (subtract-time (-> config :voices :start))
-                                  (add-time (-> config :voices :fade-in)))
-            voice-with-outro (mix voice outro outro-music-start)
-            voice-with-intro (mix intro voice-with-outro
-                                  (-> config :music :intro :full-volume-length))
-            bumper-length (length (-> config :bumper))
-            bumper-music-start (-> config :music :bumper :start-at)
-            bumper-music-fade-start (add-time bumper-music-start bumper-length)
-            bumper-music-end (add-time bumper-music-fade-start
-                                       (-> config :music :bumper :fade-out))
-            bumper-fade (-> config :music :bumper :fade-amount)
-            bumper-music (-> config :music :bumper :file
-                             (to-wav voice-rate)
-                             (trim bumper-music-start bumper-music-end)
-                             (fade [[bumper-fade 0.0]
-                                    [bumper-fade bumper-length]
-                                    [0.0 (add-time bumper-length
-                                                   (-> config :music :bumper :fade-out))]]))
-            bumper-with-music (-> config :bumper
-                                  (to-wav voice-rate)
-                                  (mix bumper-music 0.0))
-            final (append bumper-with-music
-                          (silence voice 1)
-                          (to-wav (-> config :bloops :bumper) voice-rate)
-                          (silence voice 3)
-                          voice-with-intro
-                          (silence voice 2)
-                          (to-wav (-> config :bloops :end) voice-rate))]
-        {:bumper-with-music bumper-with-music
-         :voice-with-intro voice-with-intro
-         :final final})))
+        final         (-> bumper
+                          (append (silence 1.0 2))
+                          (append (->stereo bumper-bloop))
+                          (append (silence 3.0 2))
+                          (append ivo)
+                          (append (silence 2.0 2))
+                          (append (->stereo end-bloop)))]
+    ;;(save final "episode.wav" 44100)
+    final))
