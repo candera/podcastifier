@@ -1,4 +1,4 @@
-(defproject org.craigandera/podcastifier "0.1.0-SNAPSHOT"
+(defproject org.craigandera/podcastifier "0.1.0"
   :description "Automates audio mixing of podcast elements into the final product"
   ;; :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
