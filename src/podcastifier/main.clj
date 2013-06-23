@@ -116,8 +116,8 @@
               c 0
               max-amplitude Double/MIN_VALUE]
          (if (< t max-t)
-           (let [s (sample s t c)
-                 new-max (max max-amplitude (Math/abs s))]
+           (let [s ^double (sample s t c)
+                 new-max ^double (max max-amplitude (Math/abs s))]
              (if (<= limit new-max)
                new-max
                (if (< c max-c)
