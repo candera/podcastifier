@@ -203,8 +203,10 @@
         i             (intro-music voices-config intro-config)
         o             (outro-music voices-config outro-config)
         ivo           (-> v
-                          (mix (timeshift o (-> voices-config :outro-music-start)))
-                          (timeshift (-> intro-config :full-volume-length))
+                          (mix (timeshift o (+ (:fade-in voices-config)
+                                               (- (:outro-music-start voices-config)
+                                                  (:start voices-config)))))
+                          (timeshift (:full-volume-length intro-config))
                           (mix i))
         bumper        (bumper (:bumper config) (-> config :music :bumper))
         bumper-bloop  (-> config :bloops :bumper read-sound)
