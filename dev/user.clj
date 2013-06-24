@@ -115,14 +115,14 @@
 
 
 
-(defn zeros
-  "Returns an infinite seq of the times where `s` is within `epsilon` of zero."
-  [s epsilon]
-  (let [channels (channels s)]
-    (->> (iterate #(+ % (/ 1 44100.0)) 0.0)
-         (map (fn [t] [t (sample s t)]))
-         (filter (fn [[t samp]] (every? #(< (Math/abs ^double %) epsilon) samp)))
-         (map first))))
+;; (defn zeros
+;;   "Returns an infinite seq of the times where `s` is within `epsilon` of zero."
+;;   [s epsilon]
+;;   (let [channels (channels s)]
+;;     (->> (iterate #(+ % (/ 1 44100.0)) 0.0)
+;;          (map (fn [t] [t (sample s t)]))
+;;          (filter (fn [[t samp]] (every? #(< (Math/abs ^double %) epsilon) samp)))
+;;          (map first))))
 
 
 (def config (read-config "episode.edn"))
@@ -222,3 +222,141 @@
 (def bb (java.nio.ByteBuffer/allocate bytes-per-frame))
 
 )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(comment
+
+(defn beeps
+  "Returns a sound that beeps for n seconds at frequency freq"
+  [freq n]
+  (->> (cycle [(sinusoid 0.1 440) (silence 0.4)])
+       (take (* 4 n))
+       (reduce append)))
+
+(def config (read-config "episode.edn"))
+
+(def voices-config (:voices config))
+(def intro-config (-> config :music :intro))
+(def outro-config (-> config :music :outro))
+
+
+(def i (intro-music voices-config intro-config))
+(def v (voices voices-config))
+(def o (outro-music voices-config outro-config))
+
+(visualize  (-> v
+                (mix (timeshift o (+ (:fade-in voices-config)
+                                     (- (:outro-music-start voices-config)
+                                        (:start voices-config)))))
+                (timeshift (:full-volume-length intro-config))
+                (mix i)))
+
+
+(time (save (-main "episode.edn") "episode.wav" 44100))
+
+)
+
+;;; Experimentation with combining sound operations
+
+(comment
+
+(defop multiply
+  [s1 s2]
+  {:channels (channels s1)
+   :duration (max (duration s1) (duration s2))
+   :amplitude ([t c] (p/* (sample s1 t c) (sample s2 t c)))})
+
+(compile (multiply s1 s2)) ;=>
+(sound (max (duration s1) (duration s2))
+       (fn [t c] (p/* (sample s1 t c) (sample s2 t c)))
+       (channels s1))
+
+(compile (multiply s1 s2) (multiply s3 s2)) ;=>
+
+(sound (max (max duration s1 s2) (max duration s3 s2))
+       (fn [t c] (p/* (p/* (sample s1 t c) (sample s2 t c))
+                      (p/* (sample s3 t c) (sample s2 t c)))))
+
+;; Better still
+(sound (max (max duration s1 s2) (max duration s3 s2))
+       (fn [t c] (let [samp2 (sample s2 t c)]
+                   (p/* (p/* (sample s1 t c) samp2)
+                        (p/* (sample s3 t c) samp2)))))
+
+(defprotocol Compileable
+  (compile []))
+
+(defrecord IdentityOp [snd]
+  Compileable
+  (compile
+    {:duration (duration snd)
+     :channels (channels snd)
+     :amplitude ([t c] (.amplitude snd t c))})
+  )
+
+;; Hmm. Maybe something simpler:
+
+(defn ->op
+  "Create an operation that just samples that sound
+  without additional processing."
+  [s]
+  (let [s* (gensym "sound")]
+   `{:bindings {~s* ~s}
+     :duration (.duration ~s*)
+     :channels (.channels ~s*)
+     :amplitude (.amplitude ~s* ~'t ~'c)}))
+
+
+(->op '(read-sound "foo.wav"))
+
+;=>
+{:duration (.duration sound7679)
+ :bindings {sound7679 (read-sound "foo.wav")}
+ :amplitude (.amplitude sound7679 t c)
+ :channels (.channels sound7679)}
+
+(defn gain-op [gain op]
+  (update-in op [:amplitude]
+             (fn [e] `(* ~gain ~e))))
+
+(gain-op 0.5 (->op '(read-sound "foo.wav")))
+
+;=>
+{:duration (.duration sound7697),
+ :bindings {sound7697 (read-sound "foo.wav")},
+ :amplitude (clojure.core/* 0.5 (.amplitude sound7697 t c)),
+ :channels (.channels sound7697)}
+
+
+(defn multiply-op [op1 op2]
+  {:bindings (merge (:bindings op1) (:bindings op2))
+   :duration `(max ~(:duration op1) ~(:duration op2))
+   :channels `(.channels s1)
+   :amplitude `(* ~(:amplitude op1) ~(:amplitude op2))})
+
+
+(multiply-op (gain-op 0.5 (->op 's1)) (->op 's2))
+
+;=>
+
+{:bindings {sound7727 s1, sound7728 s2},
+ :duration
+ (clojure.core/max (.duration sound7727) (.duration sound7728)),
+ :channels (.channels user/s1),
+ :amplitude
+ (clojure.core/*
+  (clojure.core/* 0.5 (.amplitude sound7727 t c))
+  (.amplitude sound7728 t c))}
+
+;; Now we just need something to take an operation and compile it into
+;; a sound.
+;; E.g.
+(compile (multiply-op (->op (read-sound "hi.wav"))
+                      (->op s2)))
+
+;=>
+(let [s1 (read-sound "hi.wav")]
+  (sound (max (.duration s1) (.duration s2))
+         (fn [t c] (* (.amplitude s1 c) (.amplitude s2 c)))
+         (.channels s1))))
