@@ -20,6 +20,13 @@
   []
   (tempfile-name @file-number))
 
+(defn read-decibel
+  "Returns a linear-scale floating point amplitude differential given
+  an amplitude differential expressed in decibels. For instance, -10.0
+  returns 0.1."
+  [db]
+  (Math/pow 10.0 (/ db 10.0)))
+
 (defn normalize-time
   "Returns a normalized time value given a time-like object, which is
   either a [h m s] tuple, a floating point number of seconds, or a
@@ -282,7 +289,12 @@
 (defn -main
   "Entry point for the application"
   [config-path]
-  (let [config (-> config-path io/reader (java.io.PushbackReader.) edn/read)]
+  (let [config (->> config-path
+                    io/reader
+                    (java.io.PushbackReader.)
+                    (edn/read (merge default-data-readers
+                                     {'duration normalize-time
+                                      'db read-decibel})))]
     (let [pan-f (if (-> config :voices :pan?) pan identity)
           voice (-> config :voices :both
                     pan-f
