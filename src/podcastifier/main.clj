@@ -22,6 +22,13 @@
   []
   (tempfile-name @file-number))
 
+;;; Volume
+
+(defn read-decibel
+  "Returns a linear-scale floating point amplitude differential given an amplitude differential expressed in decibels. For instance, -10.0 returns "
+  [db]
+  (Math/pow 10.0 (/ db 10.0)))
+
 ;;; Time
 
 (defn normalize-time
@@ -100,7 +107,8 @@
   [path]
   (edn/read
    {:readers (merge default-data-readers
-                    {'duration normalize-time})}
+                    {'duration normalize-time
+                     'db read-decibel})}
    (-> path io/reader (java.io.PushbackReader.) )))
 
 (defn peak
