@@ -292,9 +292,9 @@
   (let [config (->> config-path
                     io/reader
                     (java.io.PushbackReader.)
-                    (edn/read (merge default-data-readers
-                                     {'duration normalize-time
-                                      'db read-decibel})))]
+                    (edn/read {:readers (merge default-data-readers
+                                               {'duration normalize-time
+                                                'db read-decibel})}))]
     (let [pan-f (if (-> config :voices :pan?) pan identity)
           voice (-> config :voices :both
                     pan-f

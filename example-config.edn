@@ -1,13 +1,13 @@
 {:voices {:both "voices.wav"
           :pan? true
-          :start "00:01:20"
-          :fade-in "00:00:15"
-          :intro-music-fade "00:02:25"
-          :outro-music-start "00:05:00"
-          :end "00:05:30"}
+          :start #duration "00:01:20"
+          :fade-in #duration "00:00:15"
+          :intro-music-fade #duration "00:02:25"
+          :outro-music-start #duration "00:05:00"
+          :end #duration"00:05:30"}
  :music {:intro {:file "intro.mp3"
-                 :full-volume-length "00:00:30"
-                 :fade-amount 0.1
+                 :full-volume-length #duration "00:00:30"
+                 :fade-amount #db -10
                  :fade-out "00:00:15"}
          :outro {:file "outro.mp3"
                  :fade-amount 0.1
