@@ -5,7 +5,7 @@
             [clojure.pprint :refer [pprint]]
             [clojure.repl :refer [doc pst]]
             [clojure.tools.namespace.repl :refer [refresh]]
-            [dynne.sound :refer :all]
+            [dynne.sampled-sound :refer :all]
             [podcastifier.main :refer :all])
   (:import [javax.sound.sampled
             AudioFileFormat$Type
@@ -139,18 +139,18 @@
 ;;       (timeshift (-> intro-config :full-volume-length))
 ;;       (mix i)))
 
-(defn oversample-all
-  "Oversample all of s, for performance measurement purposes."
-  [s]
-  (let [inc-t (/ 1.0 44100)
-        delta-t (/ inc-t 4)
-        max-t (duration s)]
-    (time
-     (loop [t 0.0]
-       (when (< t max-t)
-         ;;(sample s t)
-         (oversample4 s t 0 delta-t)
-         (recur (+ t inc-t)))))))
+(comment  (defn oversample-all
+            "Oversample all of s, for performance measurement purposes."
+            [s]
+            (let [inc-t (/ 1.0 44100)
+                  delta-t (/ inc-t 4)
+                  max-t (duration s)]
+              (time
+               (loop [t 0.0]
+                 (when (< t max-t)
+                   ;;(sample s t)
+                   (oversample4 s t 0 delta-t)
+                   (recur (+ t inc-t))))))))
 
 ;; File file = new File(filename);
 ;; AudioInputStream in= AudioSystem.getAudioInputStream(file);

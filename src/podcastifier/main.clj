@@ -4,7 +4,8 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
-            [dynne.sound :as dynne :refer :all]))
+            [dynne.sampled-sound :as dynne :refer :all]
+            [hiphip.double :as dbl]))
 
 ;;; File management
 
@@ -111,28 +112,6 @@
                      'db read-decibel})}
    (-> path io/reader (java.io.PushbackReader.) )))
 
-(defn peak
-  "Returns the maximum absolute amplitude of `s` on channel `c` when
-  sampled at `sample-rate`. If provided, will return immediately on
-  finding a value above `limit`."
-  ([s sample-rate] (peak s sample-rate Double/MAX_VALUE))
-  ([s sample-rate limit]
-     (let [max-t (duration s)
-           inc-t (/ 1.0 sample-rate)
-           max-c (- (channels s) 1)]
-       (loop [t 0.0
-              c 0
-              max-amplitude Double/MIN_VALUE]
-         (if (< t max-t)
-           (let [s ^double (sample s t c)
-                 new-max ^double (max max-amplitude (Math/abs s))]
-             (if (<= limit new-max)
-               new-max
-               (if (< c max-c)
-                 (recur t (+ c 1) new-max)
-                 (recur (+ t inc-t) 0 new-max))))
-           max-amplitude)))))
-
 (defn voices
   "Returns a Sound for the voices part of the podcast given `voices-config`."
   [voices-config]
@@ -153,6 +132,7 @@
   (let [fade-out-duration (subtract-time (:intro-music-fade voices-config)
                                          (:start voices-config))
         intro-fade        (segmented-linear
+                           2
                            1.0                         (:full-volume-length intro-config)
                            (:fade-amount intro-config) (:fade-in voices-config)
                            (:fade-amount intro-config) fade-out-duration
@@ -160,13 +140,14 @@
     (-> intro-config
         :file
         read-sound
-        (multiply intro-fade))))
+        (envelope intro-fade))))
 
 (defn outro-music
   "Returns a sound for the outro-music part of the podcast given
   `outro-config` and `voices-config`"
   [voices-config outro-config]
   (let [outro-fade (segmented-linear
+                    2
                     (:fade-amount outro-config) (- (:end voices-config)
                                                    (:outro-music-start voices-config))
                     (:fade-amount outro-config) (:fade-up outro-config)
@@ -176,13 +157,13 @@
     (-> outro-config
         :file
         read-sound
-        (multiply outro-fade))))
+        (envelope outro-fade))))
 
 (defn normalize
   "Returns a version of s scaled so that the peak absoute amplitude is
   near 1.0"
   [s]
-  (let [p (peak s 4000 0.99)]
+  (let [p (peak s 16000 0.99)]
     (gain s (/ 1.0 p))))
 
 (defn bumper
@@ -198,7 +179,8 @@
         (trim 0 (+ (duration b) (:fade-out music-config)))
         (fade-out (:fade-out music-config))
         (mix b)
-        normalize)))
+        normalize
+        )))
 
 (defn -main
   "Entry point for the application"
@@ -226,5 +208,5 @@
                           (append ivo)
                           (append (silence 2.0 2))
                           (append (->stereo end-bloop)))]
-    ;;(save final "episode.wav" 44100)
+    (save final "episode.wav" 44100)
     final))
