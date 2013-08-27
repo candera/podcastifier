@@ -1,7 +1,7 @@
 <launch4jConfig>
   <dontWrapJar>false</dontWrapJar>
   <headerType>console</headerType>
-  <jar>target\podcastifier-0.1.0-SNAPSHOT-standalone.jar</jar>
+  <jar>target\podcastifier-0.2.0-SNAPSHOT-standalone.jar</jar>
   <outfile>target\podcastifier.exe</outfile>
   <errTitle></errTitle>
   <cmdLine></cmdLine>

@@ -1,11 +1,13 @@
 (ns podcastifier.main
-  (:gen-class)
+  ;; Gah: There's an issue with hiphip around AOT that's not yet
+  ;; resolved. Not sure what I'm going to do about it yet.
+  ;;
+  ;; (:gen-class)
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
-            [dynne.sampled-sound :as dynne :refer :all]
-            [hiphip.double :as dbl]))
+            [dynne.sampled-sound :as dynne :refer :all]))
 
 ;;; File management
 
@@ -22,6 +24,23 @@
 (defn last-file
   []
   (tempfile-name @file-number))
+
+(def ^:dynamic *file-base* nil)
+
+(defn parent
+  "Given a path, return its parent."
+  [path]
+  (.getParent (io/file path)))
+
+(defn relative-path
+  "Given a path, return it relative to `base`."
+  [path base]
+  (let [f (io/file path)]
+    (if (.isAbsolute f)
+      path
+      (if base
+        (-> (io/file base path) .getCanonicalPath)
+        path))))
 
 ;;; Volume
 
@@ -40,7 +59,6 @@
   (cond
    (vector? t)
    (let [[h m s] t
-
          s1 (mod s 60)
          m1 (+ m (int (Math/floor (/ s 60))))
          m2 (mod m1 60)
@@ -114,10 +132,10 @@
 
 (defn voices
   "Returns a Sound for the voices part of the podcast given `voices-config`."
-  [voices-config]
+  [base-dir voices-config]
   (let [{:keys [start end pan?]
          fade-duration :fade-in} voices-config
-         v (-> voices-config :both read-sound)
+         v (-> voices-config :both (relative-path base-dir) read-sound)
          v (trim v (subtract-time start fade-duration) end)
          v (if pan? (pan v 0.4) v)
          v-max (peak v 4000 0.99)]
@@ -128,24 +146,26 @@
 (defn intro-music
   "Returns a Sound for the intro-music part of the podcast given
   `intro-config` and `voices-config`."
-  [voices-config intro-config]
-  (let [fade-out-duration (subtract-time (:intro-music-fade voices-config)
-                                         (:start voices-config))
+  [base-dir voices-config intro-config]
+  (let [quiet-duration (subtract-time (:intro-music-fade voices-config)
+                                      (:start voices-config))
         intro-fade        (segmented-linear
                            2
-                           1.0                         (:full-volume-length intro-config)
-                           (:fade-amount intro-config) (:fade-in voices-config)
-                           (:fade-amount intro-config) fade-out-duration
+                           1.0  (:full-volume-length intro-config)
+                           1.0  (:fade-in voices-config)
+                           (:fade-amount intro-config) quiet-duration
+                           (:fade-amount intro-config) (:fade-out intro-config)
                            0)]
     (-> intro-config
         :file
+        (relative-path base-dir)
         read-sound
         (envelope intro-fade))))
 
 (defn outro-music
   "Returns a sound for the outro-music part of the podcast given
   `outro-config` and `voices-config`"
-  [voices-config outro-config]
+  [base-dir voices-config outro-config]
   (let [outro-fade (segmented-linear
                     2
                     (:fade-amount outro-config) (- (:end voices-config)
@@ -156,6 +176,7 @@
                     0.0)]
     (-> outro-config
         :file
+        (relative-path base-dir)
         read-sound
         (envelope outro-fade))))
 
@@ -169,10 +190,11 @@
 (defn bumper
   "Returns a sound for the bumper part of the podcast, containing the
   voice and music mixed togheter."
-  [path music-config]
-  (let [b (read-sound path)]
+  [base-dir path music-config]
+  (let [b (read-sound (relative-path path base-dir))]
     (-> music-config
         :file
+        (relative-path base-dir)
         read-sound
         (gain (:fade-amount music-config))
         (trim (:start-at music-config) Double/MAX_VALUE)
@@ -182,25 +204,25 @@
         normalize
         )))
 
-(defn -main
-  "Entry point for the application"
+(defn episode
   [config-path]
   (let [config        (read-config config-path)
+        base-dir      (.getParent (io/file config-path))
         voices-config (:voices config)
         intro-config  (-> config :music :intro)
         outro-config  (-> config :music :outro)
-        v             (voices voices-config)
-        i             (intro-music voices-config intro-config)
-        o             (outro-music voices-config outro-config)
+        v             (voices base-dir voices-config)
+        i             (intro-music base-dir voices-config intro-config)
+        o             (outro-music base-dir voices-config outro-config)
         ivo           (-> v
                           (mix (timeshift o (+ (:fade-in voices-config)
                                                (- (:outro-music-start voices-config)
                                                   (:start voices-config)))))
                           (timeshift (:full-volume-length intro-config))
                           (mix i))
-        bumper        (bumper (:bumper config) (-> config :music :bumper))
-        bumper-bloop  (-> config :bloops :bumper read-sound)
-        end-bloop     (-> config :bloops :end read-sound)
+        bumper        (bumper base-dir (:bumper config) (-> config :music :bumper))
+        bumper-bloop  (-> config :bloops :bumper (relative-path base-dir) read-sound)
+        end-bloop     (-> config :bloops :end (relative-path base-dir) read-sound)
         final         (-> bumper
                           (append (silence 1.0 2))
                           (append (->stereo bumper-bloop))
@@ -208,5 +230,18 @@
                           (append ivo)
                           (append (silence 2.0 2))
                           (append (->stereo end-bloop)))]
-    (save final "episode.wav" 44100)
-    final))
+    {:base-dir base-dir
+     :v        v
+     :i        i
+     :o        o
+     :ivo      ivo
+     :bumper   bumper
+     :final    final}))
+
+(defn -main
+  "Entry point for the application"
+  [config-path]
+  (let [ep (episode config-path)]
+    (save (:final episode)
+          (relative-path "episode.wav" (:base-dir ep))
+          44100)))
