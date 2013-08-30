@@ -140,24 +140,28 @@
         (gain (/ 1.0 v-max))
         (fade-in fade-duration))))
 
+(defn intro-envelope
+  "Returns a Sound that provides a fade envelope for the intro music."
+  [voices-config intro-config]
+  (let [quiet-duration (subtract-time (:intro-music-fade voices-config)
+                                      (:start voices-config))]
+    (segmented-linear
+     2
+     1.0  (:full-volume-length intro-config)
+     1.0  (:fade-in voices-config)
+     (:fade-amount intro-config) quiet-duration
+     (:fade-amount intro-config) (:fade-out intro-config)
+     0)))
+
 (defn intro-music
   "Returns a Sound for the intro-music part of the podcast given
   `intro-config` and `voices-config`."
   [base-dir voices-config intro-config]
-  (let [quiet-duration (subtract-time (:intro-music-fade voices-config)
-                                      (:start voices-config))
-        intro-fade        (segmented-linear
-                           2
-                           1.0  (:full-volume-length intro-config)
-                           1.0  (:fade-in voices-config)
-                           (:fade-amount intro-config) quiet-duration
-                           (:fade-amount intro-config) (:fade-out intro-config)
-                           0)]
-    (-> intro-config
-        :file
-        (relative-path base-dir)
-        read-sound
-        (envelope intro-fade))))
+  (-> intro-config
+      :file
+      (relative-path base-dir)
+      read-sound
+      (envelope (intro-envelope voices-config intro-config))))
 
 (defn outro-music
   "Returns a sound for the outro-music part of the podcast given
@@ -227,18 +231,23 @@
                           (append ivo)
                           (append (silence 2.0 2))
                           (append (->stereo end-bloop)))]
-    {:base-dir base-dir
-     :v        v
-     :i        i
-     :o        o
-     :ivo      ivo
-     :bumper   bumper
-     :final    final}))
+    {:base-dir       base-dir
+     :config         config
+     :v              v
+     :i              i
+     :o              o
+     :ivo            ivo
+     :bumper         bumper
+     :final          final}))
+
+(defn episode-file-name
+  [config]
+  (format "ThinkRelevance-%03d-%s.wav" (:number config) (:label config)))
 
 (defn -main
   "Entry point for the application"
   [config-path]
   (let [ep (episode config-path)]
     (save (:final episode)
-          (relative-path "episode.wav" (:base-dir ep))
+          (relative-path (episode-file-name (:config ep)) "episode.wav" (:base-dir ep))
           44100)))
