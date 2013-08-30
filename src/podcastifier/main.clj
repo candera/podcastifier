@@ -1,8 +1,5 @@
 (ns podcastifier.main
-  ;; Gah: There's an issue with hiphip around AOT that's not yet
-  ;; resolved. Not sure what I'm going to do about it yet.
-  ;;
-  ;; (:gen-class)
+  (:gen-class)
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
