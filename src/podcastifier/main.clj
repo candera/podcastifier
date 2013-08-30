@@ -248,6 +248,6 @@
   "Entry point for the application"
   [config-path]
   (let [ep (episode config-path)]
-    (save (:final episode)
-          (relative-path (episode-file-name (:config ep)) "episode.wav" (:base-dir ep))
-          44100)))
+    (save (:final ep)
+          (relative-path (episode-file-name (:config ep)) (:base-dir ep))
+          16000)))
