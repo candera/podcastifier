@@ -242,7 +242,7 @@
 
 (defn episode-file-name
   [config]
-  (format "ThinkRelevance-%03d-%s.wav" (:number config) (:label config)))
+  (format "%s-%03d-%s.wav" (:show-name config) (:number config) (:label config)))
 
 (defn -main
   "Entry point for the application"
