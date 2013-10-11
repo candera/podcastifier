@@ -1,7 +1,17 @@
 #!/bin/bash
 
-cd `dirname $0`/..
+cd $(dirname $0)/..
 
 lein clean
 lein uberjar
-launch4jc l4j.xml
+
+# Get rid of the version number, since otherwise we have to have it in
+# the l4j.xml.
+cp target/podcastifier-*-standalone.jar target/podcastifier-current-standalone.jar
+
+PROJECT_DIR=$(cygpath -aw $(dirname $0)/..)
+echo "Project directorty is ${PROJECT_DIR}"
+
+# TODO: Get rid of this absolute path nonsense
+cd /cygdrive/c/bin/launch4j
+./launch4jc $PROJECT_DIR/l4j.xml
