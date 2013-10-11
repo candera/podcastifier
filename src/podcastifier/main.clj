@@ -129,7 +129,7 @@
 
 (defn voices
   "Returns a Sound for the voices part of the podcast given `voices-config`."
-  [base-dir voices-config]
+  [base-dir voices-config footer]
   (let [{:keys [start end pan?]
          fade-duration :fade-in} voices-config
          v (-> voices-config :both (relative-path base-dir) read-sound)
@@ -138,7 +138,9 @@
          v-max (peak v 4000 0.99)]
     (-> v
         (gain (/ 1.0 v-max))
-        (fade-in fade-duration))))
+        (fade-in fade-duration)
+        (append (silence (:footer-padding voices-config) 2))
+        (append (->stereo footer)))))
 
 (defn intro-envelope
   "Returns a Sound that provides a fade envelope for the intro music."
@@ -166,11 +168,13 @@
 (defn outro-music
   "Returns a sound for the outro-music part of the podcast given
   `outro-config` and `voices-config`"
-  [base-dir voices-config outro-config]
+  [base-dir voices-config outro-config footer]
   (let [outro-fade (segmented-linear
                     2
-                    (:fade-amount outro-config) (- (:end voices-config)
-                                                   (:outro-music-start voices-config))
+                    (:fade-amount outro-config) (+ (duration footer)
+                                                   (:footer-padding voices-config)
+                                                   (- (:end voices-config)
+                                                      (:outro-music-start voices-config)))
                     (:fade-amount outro-config) (:fade-up outro-config)
                     1.0                         (:full-volume-length outro-config)
                     1.0                         (:fade-out outro-config)
@@ -201,7 +205,7 @@
         (trim (:start-at music-config) Double/MAX_VALUE)
         (trim 0 (+ (duration b) (:fade-out music-config)))
         (fade-out (:fade-out music-config))
-        (mix b)
+        (mix (->stereo b))
         normalize
         )))
 
@@ -212,9 +216,10 @@
         voices-config (:voices config)
         intro-config  (-> config :music :intro)
         outro-config  (-> config :music :outro)
-        v             (voices base-dir voices-config)
+        footer        (-> config :footer (relative-path base-dir) read-sound)
+        v             (voices base-dir voices-config footer)
         i             (intro-music base-dir voices-config intro-config)
-        o             (outro-music base-dir voices-config outro-config)
+        o             (outro-music base-dir voices-config outro-config footer)
         ivo           (-> v
                           (mix (timeshift o (+ (:fade-in voices-config)
                                                (- (:outro-music-start voices-config)
@@ -251,3 +256,4 @@
     (save (:final ep)
           (relative-path (episode-file-name (:config ep)) (:base-dir ep))
           16000)))
+
