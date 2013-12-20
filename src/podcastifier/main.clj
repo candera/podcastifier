@@ -4,7 +4,7 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
-            [dynne.sampled-sound :as dynne :refer :all]))
+            [dynne.async-sound :as dynne :refer :all]))
 
 ;;; File management
 
@@ -139,7 +139,9 @@
     (-> v
         (gain (/ 1.0 v-max))
         (fade-in fade-duration)
-        (append (silence (:footer-padding voices-config) 2))
+        (append (silence (+ (* 2 (:footer-fade-up-down voices-config))
+                            (:footer-padding voices-config))
+                         2))
         (append (->stereo footer)))))
 
 (defn intro-envelope
@@ -171,14 +173,16 @@
   [base-dir voices-config outro-config footer]
   (let [outro-fade (segmented-linear
                     2
-                    (:fade-amount outro-config) (+ (duration footer)
-                                                   (:footer-padding voices-config)
-                                                   (- (:end voices-config)
-                                                      (:outro-music-start voices-config)))
+                    (:fade-amount outro-config) (- (:end voices-config)
+                                                   (:outro-music-start voices-config))
+                    (:fade-amount outro-config) (:footer-fade-up-down voices-config)
+                    1.0                         (:footer-padding voices-config)
+                    1.0                         (:footer-fade-up-down voices-config)
+                    (:fade-amount outro-config) (duration footer)
                     (:fade-amount outro-config) (:fade-up outro-config)
                     1.0                         (:full-volume-length outro-config)
                     1.0                         (:fade-out outro-config)
-                    0.0)]
+                    0.0) ]
     (-> outro-config
         :file
         (relative-path base-dir)
@@ -256,4 +260,3 @@
     (save (:final ep)
           (relative-path (episode-file-name (:config ep)) (:base-dir ep))
           16000)))
-

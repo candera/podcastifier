@@ -1,10 +1,10 @@
-(defproject org.craigandera/podcastifier "0.5.0"
+(defproject org.craigandera/podcastifier "0.7.1"
   :description "Automates audio mixing of podcast elements into the final product"
   ;; :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.5.1"]
-                 [org.craigandera/dynne "0.3.0"]]
+                 [org.craigandera/dynne "0.4.1"]]
   :main podcastifier.main
   :profiles {:dev
              {:source-paths ["dev"]

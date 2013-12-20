@@ -2,16 +2,44 @@
 
 cd $(dirname $0)/..
 
+PROJECT_VERSION=$(head -1 project.clj | grep -Po '\d+\.\d+\.\d+')
+
+echo "Project version detected as ${PROJECT_VERSION}"
+
 lein clean
 lein uberjar
 
-# Get rid of the version number, since otherwise we have to have it in
-# the l4j.xml.
-cp target/podcastifier-*-standalone.jar target/podcastifier-current-standalone.jar
+rm l4j.xml
+
+cat <<EOF > l4j.xml
+<launch4jConfig>
+  <dontWrapJar>false</dontWrapJar>
+  <headerType>console</headerType>
+  <jar>target\podcastifier-${PROJECT_VERSION}-standalone.jar</jar>
+  <outfile>target\podcastifier-${PROJECT_VERSION}.exe</outfile>
+  <errTitle></errTitle>
+  <cmdLine></cmdLine>
+  <chdir></chdir>
+  <priority>normal</priority>
+  <downloadUrl>http://java.com/download</downloadUrl>
+  <supportUrl></supportUrl>
+  <customProcName>false</customProcName>
+  <stayAlive>false</stayAlive>
+  <manifest></manifest>
+  <icon></icon>
+  <jre>
+    <path></path>
+    <minVersion>1.6.0</minVersion>
+    <maxVersion></maxVersion>
+    <jdkPreference>preferJre</jdkPreference>
+  </jre>
+</launch4jConfig>
+EOF
 
 PROJECT_DIR=$(cygpath -aw $(dirname $0)/..)
 echo "Project directorty is ${PROJECT_DIR}"
 
-# TODO: Get rid of this absolute path nonsense
-cd /cygdrive/c/bin/launch4j
+cd $(dirname $(which launch4j))
 ./launch4jc $PROJECT_DIR/l4j.xml
+
+
