@@ -4,7 +4,7 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
-            [dynne.async-sound :as dynne :refer :all]))
+            [dynne.sampled-sound :as dynne :refer :all]))
 
 ;;; File management
 
