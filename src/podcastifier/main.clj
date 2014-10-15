@@ -151,8 +151,8 @@
                                       (:start voices-config))]
     (segmented-linear
      2
-     1.0  (:full-volume-length intro-config)
-     1.0  (:fade-in voices-config)
+     (get intro-config :full-volume-level 1.0)  (:full-volume-length intro-config)
+     (get intro-config :full-volume-level 1.0)  (:fade-in voices-config)
      (:fade-amount intro-config) quiet-duration
      (:fade-amount intro-config) (:fade-out intro-config)
      0)))
@@ -171,17 +171,18 @@
   "Returns a sound for the outro-music part of the podcast given
   `outro-config` and `voices-config`"
   [base-dir voices-config outro-config footer]
+  (println "outtro" (get outro-config :full-volume-level 1.0))
   (let [outro-fade (segmented-linear
                     2
                     (:fade-amount outro-config) (- (:end voices-config)
                                                    (:outro-music-start voices-config))
-                    (:fade-amount outro-config) (:footer-fade-up-down voices-config)
-                    1.0                         (:footer-padding voices-config)
-                    1.0                         (:footer-fade-up-down voices-config)
-                    (:fade-amount outro-config) (duration footer)
-                    (:fade-amount outro-config) (:fade-up outro-config)
-                    1.0                         (:full-volume-length outro-config)
-                    1.0                         (:fade-out outro-config)
+                    (:fade-amount outro-config)               (:footer-fade-up-down voices-config)
+                    (get outro-config :full-volume-level 1.0) (:footer-padding voices-config)
+                    (get outro-config :full-volume-level 1.0) (:footer-fade-up-down voices-config)
+                    (:fade-amount outro-config)               (duration footer)
+                    (:fade-amount outro-config)               (:fade-up outro-config)
+                    (get outro-config :full-volume-level 1.0) (:full-volume-length outro-config)
+                    (get outro-config :full-volume-level 1.0) (:fade-out outro-config)
                     0.0) ]
     (-> outro-config
         :file
