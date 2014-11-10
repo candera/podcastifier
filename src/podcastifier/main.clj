@@ -127,14 +127,23 @@
                      'db read-decibel})}
    (-> path io/reader (java.io.PushbackReader.) )))
 
+(defn pan-value
+  "Takes a voices-config and returns the configured pan value,
+  filling the default if needed."
+  [{:keys [pan? pan-amount]}]
+  (cond
+     pan-amount pan-amount
+     pan?       0.4))
+
 (defn voices
   "Returns a Sound for the voices part of the podcast given `voices-config`."
   [base-dir voices-config footer]
-  (let [{:keys [start end pan?]
+  (let [{:keys [start end]
          fade-duration :fade-in} voices-config
+         p (pan-value voices-config)
          v (-> voices-config :both (relative-path base-dir) read-sound)
          v (trim v (subtract-time start fade-duration) end)
-         v (if pan? (pan v 0.4) v)
+         v (if p (pan v p) v)
          v-max (peak v 4000 0.99)]
     (-> v
         (gain (/ 1.0 v-max))

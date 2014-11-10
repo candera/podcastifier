@@ -1,5 +1,5 @@
 {:voices {:both "voices.wav"
-          :pan? true
+          :pan-amount 0.4
           :start "00:01:20"
           :fade-in "00:00:15"
           :intro-music-fade "00:02:25"
