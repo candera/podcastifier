@@ -135,6 +135,12 @@
      pan-amount pan-amount
      pan?       0.4))
 
+(defn footer-silence-duration
+  "Returns the duration of the silence between the main interview and the footer"
+  [voices-config]
+  (+ (* 2 (:footer-fade-up-down voices-config))
+   (:footer-padding voices-config)))
+
 (defn voices
   "Returns a Sound for the voices part of the podcast given `voices-config`."
   [base-dir voices-config footer]
@@ -148,9 +154,7 @@
     (-> v
         (gain (/ 1.0 v-max))
         (fade-in fade-duration)
-        (append (silence (+ (* 2 (:footer-fade-up-down voices-config))
-                            (:footer-padding voices-config))
-                         2))
+        (append (silence (footer-silence-duration voices-config) 2))
         (append (->stereo footer)))))
 
 (defn intro-envelope
@@ -176,11 +180,21 @@
       read-sound
       (envelope (intro-envelope voices-config intro-config))))
 
+(def outro-offset 15)
+
+(def play-extra 25)
+
+(defn outro-clip [base-dir voices-config outro-config footer]
+  (let [outro (-> outro-config :file (relative-path base-dir) read-sound)
+        outro-duration (duration outro)
+        clipped-duration (+ outro-offset  (footer-silence-duration voices-config) (duration footer) play-extra)
+        start (- outro-duration clipped-duration)]
+    (trim outro start outro-duration)))
+
 (defn outro-music
   "Returns a sound for the outro-music part of the podcast given
   `outro-config` and `voices-config`"
   [base-dir voices-config outro-config footer]
-  (println "outtro" (get outro-config :full-volume-level 1.0))
   (let [outro-fade (segmented-linear
                     2
                     (:fade-amount outro-config) (- (:end voices-config)
@@ -193,10 +207,7 @@
                     (get outro-config :full-volume-level 1.0) (:full-volume-length outro-config)
                     (get outro-config :full-volume-level 1.0) (:fade-out outro-config)
                     0.0) ]
-    (-> outro-config
-        :file
-        (relative-path base-dir)
-        read-sound
+    (-> (outro-clip base-dir voices-config outro-config footer)
         (envelope outro-fade))))
 
 (defn normalize
