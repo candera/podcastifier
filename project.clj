@@ -12,4 +12,5 @@
               :jvm-opts ^:replace ["-Xdebug"
                                    ;;"-Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=9900"
                                    ]
-              }})
+              }
+              :uberjar {:aot :all}})
