@@ -127,88 +127,6 @@
                      'db read-decibel})}
    (-> path io/reader (java.io.PushbackReader.) )))
 
-(defn pan-value
-  "Takes a voices-config and returns the configured pan value,
-  filling the default if needed."
-  [{:keys [pan? pan-amount]}]
-  (cond
-     pan-amount pan-amount
-     pan?       0.4))
-
-(defn footer-silence-duration
-  "Returns the duration of the silence between the main interview and the footer"
-  [voices-config]
-  (+ (* 2 (:footer-fade-up-down voices-config))
-   (:footer-padding voices-config)))
-
-(defn voices
-  "Returns a Sound for the voices part of the podcast given `voices-config`."
-  [base-dir voices-config footer]
-  (let [{:keys [start end]
-         fade-duration :fade-in} voices-config
-         p (pan-value voices-config)
-         v (-> voices-config :both (relative-path base-dir) read-sound)
-         v (trim v (subtract-time start fade-duration) end)
-         v (if p (pan v p) v)
-         v-max (peak v 4000 0.99)]
-    (-> v
-        (gain (/ 1.0 v-max))
-        (fade-in fade-duration)
-        (append (silence (footer-silence-duration voices-config) 2))
-        (append (->stereo footer)))))
-
-(defn intro-envelope
-  "Returns a Sound that provides a fade envelope for the intro music."
-  [voices-config intro-config]
-  (let [quiet-duration (subtract-time (:intro-music-fade voices-config)
-                                      (:start voices-config))]
-    (segmented-linear
-     2
-     (get intro-config :full-volume-level 1.0)  (:full-volume-length intro-config)
-     (get intro-config :full-volume-level 1.0)  (:fade-in voices-config)
-     (:fade-amount intro-config) quiet-duration
-     (:fade-amount intro-config) (:fade-out intro-config)
-     0)))
-
-(defn intro-music
-  "Returns a Sound for the intro-music part of the podcast given
-  `intro-config` and `voices-config`."
-  [base-dir voices-config intro-config]
-  (-> intro-config
-      :file
-      (relative-path base-dir)
-      read-sound
-      (envelope (intro-envelope voices-config intro-config))))
-
-(def outro-offset 15)
-
-(def play-extra 25)
-
-(defn outro-clip [base-dir voices-config outro-config footer]
-  (let [outro (-> outro-config :file (relative-path base-dir) read-sound)
-        outro-duration (duration outro)
-        clipped-duration (+ outro-offset  (footer-silence-duration voices-config) (duration footer) play-extra)
-        start (- outro-duration clipped-duration)]
-    (trim outro start outro-duration)))
-
-(defn outro-music
-  "Returns a sound for the outro-music part of the podcast given
-  `outro-config` and `voices-config`"
-  [base-dir voices-config outro-config footer]
-  (let [outro-fade (segmented-linear
-                    2
-                    (:fade-amount outro-config) (- (:end voices-config)
-                                                   (:outro-music-start voices-config))
-                    (:fade-amount outro-config)               (:footer-fade-up-down voices-config)
-                    (get outro-config :full-volume-level 1.0) (:footer-padding voices-config)
-                    (get outro-config :full-volume-level 1.0) (:footer-fade-up-down voices-config)
-                    (:fade-amount outro-config)               (duration footer)
-                    (:fade-amount outro-config)               (:fade-up outro-config)
-                    (get outro-config :full-volume-level 1.0) (:full-volume-length outro-config)
-                    (get outro-config :full-volume-level 1.0) (:fade-out outro-config)
-                    0.0) ]
-    (-> (outro-clip base-dir voices-config outro-config footer)
-        (envelope outro-fade))))
 
 (defn normalize
   "Returns a version of s scaled so that the peak absoute amplitude is
@@ -217,22 +135,158 @@
   (let [p (peak s 16000 0.99)]
     (gain s (/ 1.0 p))))
 
+
+(defn has-keys?
+  "Return true if all of the keys are defined in the map"
+  [m & keys]
+  (every? (partial contains? m) keys))
+
+
+(defn trim-sound
+  "Given a sound config and a sound, trim the sound according to the config.
+  The specific trimming done depends on what is in the config:
+  * If :start and :end are specified, that's what gets used.
+  * If :start and :duration are specified, you get that.
+  * If :end and :duration is used, you get a sound that ends on end and is duration long.
+  * If only :start is specified, you get :start->end of the sound.
+  * If only :end is specified, you get 0->:end.
+  * If only :duration is specified, you get 0->:duration.
+  * If :tail is specified, you get a sound that is :tail long, with the front clipped off.
+  * None of the above gives you the original sound."
+  [s config]
+  (let [[start end]
+        (cond
+         (has-keys? config :start :end) [(:start config) (:end config)]
+         (has-keys? config :start :duration) [(:start config) (+ (:start config) (:duration config))]
+         (has-keys? config :end :duration) [(- (:end config) (:duration config)) (:end config)]
+         (has-keys? config :start) [(:start config) (duration s)]
+         (has-keys? config :end) [0.0 (:end config)]
+         (has-keys? config :duration) [0.0 (:duration config)]
+         (has-keys? config :tail) [(- (duration s) (:tail config)) (duration s)]
+         :default [0.0 (duration s)])
+        start (if (:start-pad config) (- start (:start-pad config)) start)
+        end (if (:end-pad config) (+ end (:end-pad config)) end)
+        start (Math/max 0.0 (double start))
+        end (Math/min (duration s) (double end))]
+    (trim s start end)))
+
+(defn fade-sound
+  [s config]
+  (let [s (if (:fade-in config) (fade-in s (:fade-in config)) s)
+        s (if (:fade-out config) (fade-out s (:fade-out config)) s)]
+    s))
+
+(defn read-sound-file
+  "Read a sound file according to the instructions in config.
+  The sound can be trimmed, amplified, normalized, doubled into stereo,
+  panned, faded or have silence added to the front or back if the
+  config specifies."
+  [base-dir config]
+  (let [sound (-> config :file (relative-path base-dir) read-sound)
+        sound (trim-sound sound config)
+        sound (if (:gain config) (gain sound (:gain config)) sound)
+        sound (if (:normalize config) (normalize sound) sound)
+        sound (if (:->stereo config) (->stereo sound) sound)
+        sound (if (:pan config) (pan sound (:pan config)) sound)
+        sound (fade-sound sound config)
+        sound (if (:pre-silence config) (append (silence (:pre-silence config) 2) sound) sound)
+        sound (if (:post-silence config) (append sound (silence (:post-silence config) 2)) sound)]
+    sound))
+
+
+(defn two-step-fade-in
+  "Fade the sound such that it starts from 0 and fades up to fade-level,
+  stays there for about overlap seconds and then fades up to 1."
+  [s overlap fade-t fade-level]
+  (let [quiet-t (- overlap fade-t)]
+    (envelope
+     (segmented-linear
+      2
+      0.0        fade-t
+      fade-level quiet-t
+      fade-level fade-t
+      1.0        (duration s)
+      1.0)
+     s)))
+
+
+(defn append-music
+  "Append the music to the voices with appropriate fades.
+  The result has the music fading in in two steps
+  as with voices end. The two sounds overlap
+  for duration overlap."
+  [voices music overlap fade-t fade-level]
+  (let [join-t (- (duration voices) overlap)
+        faded-music (two-step-fade-in music overlap fade-t fade-level)]
+    (mix voices (timeshift faded-music join-t))))
+
+
+(defn two-step-fade-out
+  "Fade the sound such that it drops to fade-level overlap seconds
+  from the end and then fades out completely."
+  [s overlap fade-t fade-level]
+  (let [start-t (-  (duration s)overlap)
+        quiet-t (- overlap (* 2 fade-t))]
+    (envelope
+     (segmented-linear
+      2
+      1.0      start-t
+      1.0      fade-t
+      fade-level quiet-t
+      fade-level fade-t
+      0.0        (duration s)
+      0.0)
+     s)))
+
+(defn prepend-music
+  "Join music and voices together, so that they overlap by
+  overlap seconds. The music fades down to fade-level during
+  the overlap."
+  [music voices overlap fade-t fade-level]
+  (let [faded-music (two-step-fade-out music overlap fade-t fade-level)]
+    (mix faded-music (timeshift voices (- (duration music) overlap)))))
+
+
+(defn duck-fade
+  "Fade s down to fade-db between t1 and t2"
+  [s t1 t2 fade-t duck-level]
+  (let [quiet-t (- t2 t1)]
+    (envelope
+     (segmented-linear
+      2
+      1.0
+      t1  1.0
+      fade-t   duck-level
+      quiet-t  duck-level
+      fade-t   1.0
+      (duration s) 1.0)
+     s)))
+
+
+(defn duck
+  "Duck s2 into s1 starting at t.
+  Essentially we mix s2 into s1 at time t, fading s1 down to level duck-level
+  while keeping s1 at full volume."
+  [s1 s2 t fade-t duck-level]
+  (let [overlap (* fade-t 0.8)
+        t1 (- t overlap)
+        t2 (- (+ t1 (duration s2)) overlap)
+        s1 (duck-fade s1 t1 t2 fade-t duck-level)]
+    (mix s1 (timeshift s2 t))))
+
+
+
 (defn bumper
   "Returns a sound for the bumper part of the podcast, containing the
-  voice and music mixed togheter."
-  [base-dir path music-config]
-  (let [b (read-sound (relative-path path base-dir))]
-    (-> music-config
-        :file
-        (relative-path base-dir)
-        read-sound
-        (gain (:fade-amount music-config))
-        (trim (:start-at music-config) Double/MAX_VALUE)
-        (trim 0 (+ (duration b) (:fade-out music-config)))
-        (fade-out (:fade-out music-config))
-        (mix (->stereo b))
-        normalize
-        )))
+  bumper voice and music mixed togheter."
+  [base-dir bumper-config music-config]
+  (let [extra (get music-config :extra 4.0)
+        b (read-sound-file base-dir bumper-config)
+        m (read-sound-file base-dir music-config)
+        m (trim m 0 (+ extra (duration b)))
+        m (fade-out m extra)]
+     (mix (->stereo(normalize b)) m)))
+
 
 (defn episode
   [config-path]
@@ -241,34 +295,36 @@
         voices-config (:voices config)
         intro-config  (-> config :music :intro)
         outro-config  (-> config :music :outro)
-        footer        (-> config :footer (relative-path base-dir) read-sound)
-        v             (voices base-dir voices-config footer)
-        i             (intro-music base-dir voices-config intro-config)
-        o             (outro-music base-dir voices-config outro-config footer)
-        ivo           (-> v
-                          (mix (timeshift o (+ (:fade-in voices-config)
-                                               (- (:outro-music-start voices-config)
-                                                  (:start voices-config)))))
-                          (timeshift (:full-volume-length intro-config))
-                          (mix i))
-        bumper        (bumper base-dir (:bumper config) (-> config :music :bumper))
-        bumper-bloop  (-> config :bloops :bumper (relative-path base-dir) read-sound)
-        end-bloop     (-> config :bloops :end (relative-path base-dir) read-sound)
-        final         (-> bumper
-                          (append (silence 1.0 2))
-                          (append (->stereo bumper-bloop))
-                          (append (silence 3.0 2))
-                          (append ivo)
-                          (append (silence 2.0 2))
-                          (append (->stereo end-bloop)))]
+        bumper-config (-> config :music :bumper)
+        footer-config (-> config :footer)
+        start-bloop   (->> config :start-bloop (read-sound-file base-dir))
+        end-bloop     (->> config :end-bloop (read-sound-file base-dir))
+        footer        (read-sound-file base-dir footer-config)
+        mixed-bumper  (bumper base-dir (:bumper config) (-> config :music :bumper))
+        i             (read-sound-file base-dir intro-config)
+        v             (read-sound-file base-dir voices-config)
+        o             (read-sound-file base-dir outro-config)
+        of            (duck o footer (:offset footer-config)
+                                     (:overlap-fade-updown footer-config)
+                                     (:overlap-fade footer-config))
+        iv            (prepend-music i
+                                     v
+                                     (:overlap intro-config)
+                                     (:overlap-fade-updown intro-config)
+                                     (:overlap-fade intro-config))
+        ivof          (append-music iv
+                                    of
+                                    (:overlap outro-config)
+                                    (:overlap-fade-updown outro-config)
+                                    (:overlap-fade outro-config))
+        final         (-> mixed-bumper
+                          (append start-bloop)
+                          (append ivof)
+                          (append end-bloop))]
     {:base-dir       base-dir
      :config         config
-     :v              v
-     :i              i
-     :o              o
-     :ivo            ivo
-     :bumper         bumper
      :final          final}))
+
 
 (defn episode-file-name
   [config]
@@ -281,3 +337,7 @@
     (save (:final ep)
           (relative-path (episode-file-name (:config ep)) (:base-dir ep))
           16000)))
+
+
+
+
