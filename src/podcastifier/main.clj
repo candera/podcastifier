@@ -297,6 +297,7 @@
         outro-config  (-> config :music :outro)
         bumper-config (-> config :music :bumper)
         footer-config (-> config :footer)
+        easter-config (-> config :easter-egg)
         start-bloop   (->> config :start-bloop (read-sound-file base-dir))
         end-bloop     (->> config :end-bloop (read-sound-file base-dir))
         footer        (read-sound-file base-dir footer-config)
@@ -317,10 +318,12 @@
                                     (:overlap outro-config)
                                     (:overlap-fade-updown outro-config)
                                     (:overlap-fade outro-config))
-        final         (-> mixed-bumper
+        show          (-> mixed-bumper
                           (append start-bloop)
                           (append ivof)
-                          (append end-bloop))]
+                          (append end-bloop))
+        easter-egg    (read-sound-file base-dir easter-config)
+        final         (if easter-egg (append show easter-egg) show)]
     {:base-dir       base-dir
      :config         config
      :final          final}))
