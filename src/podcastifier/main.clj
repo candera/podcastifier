@@ -1,9 +1,11 @@
 (ns podcastifier.main
   (:gen-class)
+  (:refer-clojure :exclude [resolve])
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
+            [clojure.walk :as w]
             [dynne.sampled-sound :as dynne :refer :all]))
 
 ;;; File management
@@ -32,6 +34,7 @@
 (defn relative-path
   "Given a path, return it relative to `base`."
   [path base]
+  (println "path:" path "base:" base)
   (let [f (io/file path)]
     (if (.isAbsolute f)
       path
@@ -176,14 +179,9 @@
         s (if (:fade-out config) (fade-out s (:fade-out config)) s)]
     s))
 
-(defn read-sound-file
-  "Read a sound file according to the instructions in config.
-  The sound can be trimmed, amplified, normalized, doubled into stereo,
-  panned, faded or have silence added to the front or back if the
-  config specifies."
-  [base-dir config]
-  (let [sound (-> config :file (relative-path base-dir) read-sound)
-        sound (trim-sound sound config)
+(defn process-sound
+  [sound config]
+  (let [sound (trim-sound sound config)
         sound (if (:gain config) (gain sound (:gain config)) sound)
         sound (if (:normalize config) (normalize sound) sound)
         sound (if (:->stereo config) (->stereo sound) sound)
@@ -193,6 +191,10 @@
         sound (if (:post-silence config) (append sound (silence (:post-silence config) 2)) sound)]
     sound))
 
+(defn read-sound-file
+  [base-dir name]
+  (let [sound (-> name (relative-path base-dir) read-sound)]
+    sound))
 
 (defn two-step-fade-in
   "Fade the sound such that it starts from 0 and fades up to fade-level,
@@ -215,9 +217,9 @@
   The result has the music fading in in two steps
   as with voices end. The two sounds overlap
   for duration overlap."
-  [voices music overlap fade-t fade-level]
+  [voices music & {:keys [overlap fade updown] :or {overlap 20.0 fade 0.2 updown 4.0}}]
   (let [join-t (- (duration voices) overlap)
-        faded-music (two-step-fade-in music overlap fade-t fade-level)]
+        faded-music (two-step-fade-in music overlap updown fade)]
     (mix voices (timeshift faded-music join-t))))
 
 
@@ -242,10 +244,9 @@
   "Join music and voices together, so that they overlap by
   overlap seconds. The music fades down to fade-level during
   the overlap."
-  [music voices overlap fade-t fade-level]
-  (let [faded-music (two-step-fade-out music overlap fade-t fade-level)]
+  [music voices & {:keys [overlap fade updown] :or {overlap 20.0 fade 0.2 updown 4.0}}]
+  (let [faded-music (two-step-fade-out music overlap updown fade)]
     (mix faded-music (timeshift voices (- (duration music) overlap)))))
-
 
 (defn duck-fade
   "Fade s down to fade-db between t1 and t2"
@@ -267,80 +268,90 @@
   "Duck s2 into s1 starting at t.
   Essentially we mix s2 into s1 at time t, fading s1 down to level duck-level
   while keeping s1 at full volume."
-  [s1 s2 t fade-t duck-level]
-  (let [overlap (* fade-t 0.8)
-        t1 (- t overlap)
+  [s1 s2 & {:keys [offset fade updown] :or {offset 20.0 fade 0.2 updown 4.0}}]
+  (let [overlap (* updown 0.8)
+        t1 (- offset overlap)
         t2 (- (+ t1 (duration s2)) overlap)
-        s1 (duck-fade s1 t1 t2 fade-t duck-level)]
-    (mix s1 (timeshift s2 t))))
+        s1 (duck-fade s1 t1 t2 updown fade)]
+    (mix s1 (timeshift s2 offset))))
 
 
-
-(defn bumper
+(defn background
   "Returns a sound for the bumper part of the podcast, containing the
   bumper voice and music mixed togheter."
-  [base-dir bumper-config music-config]
-  (let [extra (get music-config :extra 4.0)
-        b (read-sound-file base-dir bumper-config)
-        m (read-sound-file base-dir music-config)
-        m (trim m 0 (+ extra (duration b)))
-        m (fade-out m extra)]
-     (mix (->stereo(normalize b)) m)))
-
-
-(defn episode
-  [config-path]
-  (let [config        (read-config config-path)
-        base-dir      (.getParent (io/file config-path))
-        voices-config (:voices config)
-        intro-config  (-> config :music :intro)
-        outro-config  (-> config :music :outro)
-        bumper-config (-> config :music :bumper)
-        footer-config (-> config :footer)
-        easter-config (-> config :easter-egg)
-        start-bloop   (->> config :start-bloop (read-sound-file base-dir))
-        end-bloop     (->> config :end-bloop (read-sound-file base-dir))
-        footer        (read-sound-file base-dir footer-config)
-        mixed-bumper  (bumper base-dir (:bumper config) (-> config :music :bumper))
-        i             (read-sound-file base-dir intro-config)
-        v             (read-sound-file base-dir voices-config)
-        o             (read-sound-file base-dir outro-config)
-        of            (duck o footer (:offset footer-config)
-                                     (:overlap-fade-updown footer-config)
-                                     (:overlap-fade footer-config))
-        iv            (prepend-music i
-                                     v
-                                     (:overlap intro-config)
-                                     (:overlap-fade-updown intro-config)
-                                     (:overlap-fade intro-config))
-        ivof          (append-music iv
-                                    of
-                                    (:overlap outro-config)
-                                    (:overlap-fade-updown outro-config)
-                                    (:overlap-fade outro-config))
-        show          (-> mixed-bumper
-                          (append start-bloop)
-                          (append ivof)
-                          (append end-bloop))
-        easter-egg    (read-sound-file base-dir easter-config)
-        final         (if easter-egg (append show easter-egg) show)]
-    {:base-dir       base-dir
-     :config         config
-     :final          final}))
-
+  [fg bg & {:keys [extra] :or {extra 5.0}}]
+  (let [bg (trim bg 0 (+ extra (duration fg)))
+        music (fade-out bg extra)]
+     (mix (->stereo(normalize fg)) bg)))
 
 (defn episode-file-name
   [config]
   (format "%s-%03d-%s.wav" (:show-name config) (:number config) (:label config)))
 
+
+(declare resolve)
+
+(defn resolve-all [dir config s]
+  (map #(resolve dir config %) s))
+
+(defn mix-f [a b]
+  (println "Mix:" a b)
+  (mix a b))
+
+(defn resolve-vector[base-dir config v]
+  (println "**Vector:" v)
+  (reduce (fn [a b]
+            (println "append f" a b)
+            (append
+             (resolve base-dir config a)
+             (resolve base-dir config b)))
+          v))
+
+(defn resolve-list [base-dir config l]
+  (let [verb (first l)
+        args (rest l)
+        res-f (partial resolve base-dir config)
+        a (first args)
+        b (second args)]
+    (cond
+     (= verb 'background) (apply background  (res-f a) (res-f b) (drop 2 args))
+     (= verb 'fade-out-music) (apply prepend-music (res-f a) (res-f b) (drop 2 args))
+     (= verb 'fade-in-music) (apply append-music (res-f a) (res-f b) (drop 2 args))
+     (= verb 'duck) (apply duck (res-f a) (res-f b) (drop 2 args))
+     (= verb 'mix) (mix-f (res-f a) (res-f b))
+     (= verb 'timeshift) (timeshift (res-f a) b)
+     :default (throw
+               (Exception.
+                (str "Don't know how to resolve verb " verb " " (class verb) " from " l))))))
+
+(defn resolve [base-dir config id]
+    (println "resolve" id)
+    (cond
+     (string? id) (read-sound-file base-dir id)
+     (keyword? id) (do (println "kw:" id) (resolve base-dir config (id config)))
+     (map? id) (do
+                 (println "map!" id)
+                 (process-sound (resolve base-dir config (:sound id)) id))
+     (list? id) (do (println "list" id) (resolve-list base-dir config id))
+     (vector? id) (resolve-vector base-dir config id)
+     (nil? id) (throw (Exception. (str "Cant resolve nil")))
+     :default id))
+
+(defmacro enmemoize [f]
+  `(def ~f (memoize ~f)))
+
+(enmemoize resolve)
+
 (defn -main
-  "Entry point for the application"
-  [config-path]
-  (let [ep (episode config-path)]
-    (save (:final ep)
-          (relative-path (episode-file-name (:config ep)) (:base-dir ep))
-          16000)))
+  [config-path & args]
+  (let [base-dir  (.getParent (io/file config-path))
+        config (read-config config-path)
+        config (assoc config :base-dir base-dir)
+        sounds (:sounds config)
+        final-kw (:final config)
+        final (resolve base-dir sounds final-kw)]
+    (println "duration:" (duration final))
+    (save final (relative-path (episode-file-name config) base-dir)  16000)))
 
-
-
+(-main "../t1/episode.edn")
 
