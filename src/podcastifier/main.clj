@@ -34,7 +34,7 @@
 (defn relative-path
   "Given a path, return it relative to `base`."
   [path base]
-  (println "path:" path "base:" base)
+  #_(println "path:" path "base:" base)
   (let [f (io/file path)]
     (if (.isAbsolute f)
       path
@@ -193,6 +193,7 @@
 
 (defn read-sound-file
   [base-dir name]
+  #_(println "read sound file:" base-dir name)
   (let [sound (-> name (relative-path base-dir) read-sound)]
     sound))
 
@@ -291,65 +292,65 @@
 
 (declare resolve)
 
-(defn resolve-all [dir config s]
-  (map #(resolve dir config %) s))
+(defn resolve-reduce [config f s]
+  (println "Resulve reduce" config)
+  (println "Res reduce" f)
+  (println "Res reduce" s)
+  (reduce f (map (partial resolve config) s)))
 
-(defn mix-f [a b]
-  (println "Mix:" a b)
-  (mix a b))
 
-(defn resolve-vector[base-dir config v]
-  (println "**Vector:" v)
-  (reduce (fn [a b]
-            (println "append f" a b)
-            (append
-             (resolve base-dir config a)
-             (resolve base-dir config b)))
-          v))
+(defn append-all[config s]
+  (resolve-reduce config append s))
 
-(defn resolve-list [base-dir config l]
+(defn mix-all [config s]
+  (println "mix:" s)
+  (resolve-reduce config mix s))
+
+(defn resolve-list [config l]
   (let [verb (first l)
         args (rest l)
-        res-f (partial resolve base-dir config)
+        res (partial resolve config)
         a (first args)
         b (second args)]
     (cond
-     (= verb 'background) (apply background  (res-f a) (res-f b) (drop 2 args))
-     (= verb 'fade-out-music) (apply prepend-music (res-f a) (res-f b) (drop 2 args))
-     (= verb 'fade-in-music) (apply append-music (res-f a) (res-f b) (drop 2 args))
-     (= verb 'duck) (apply duck (res-f a) (res-f b) (drop 2 args))
-     (= verb 'mix) (mix-f (res-f a) (res-f b))
-     (= verb 'timeshift) (timeshift (res-f a) b)
+     (= verb 'background) (apply background  (res a) (res b) (drop 2 args))
+     (= verb 'fade-out-music) (apply prepend-music (res a) (res b) (drop 2 args))
+     (= verb 'fade-in-music) (apply append-music (res a) (res b) (drop 2 args))
+     (= verb 'duck) (apply duck (res a) (res b) (drop 2 args))
+     (= verb 'mix) (mix-all args)
+     (= verb 'timeshift) (timeshift (res a) b)
      :default (throw
                (Exception.
                 (str "Don't know how to resolve verb " verb " " (class verb) " from " l))))))
 
-(defn resolve [base-dir config id]
-    (println "resolve" id)
-    (cond
-     (string? id) (read-sound-file base-dir id)
-     (keyword? id) (do (println "kw:" id) (resolve base-dir config (id config)))
-     (map? id) (do
-                 (println "map!" id)
-                 (process-sound (resolve base-dir config (:sound id)) id))
-     (list? id) (do (println "list" id) (resolve-list base-dir config id))
-     (vector? id) (resolve-vector base-dir config id)
-     (nil? id) (throw (Exception. (str "Cant resolve nil")))
-     :default id))
+(defn resolve [config id]
+  #_(println "resolve id" id)
+  #_(println "resolve config:" config)
+  (let [result
+        (cond
+         (string? id) (read-sound-file (:base-dir config) id)
+         (keyword? id) (resolve config (id config))
+         (map? id)  (process-sound (resolve config (:source id)) id)
+         (vector? id) (append-all config id)
+         (set? id) (mix-all config id)
+         (list? id) (resolve-list config id)
+         (nil? id) (throw (Exception. (str "Cant resolve nil")))
+         :default id)]
+    (println "**Resolve:" id "=>" result)
+    result))
 
-(defmacro enmemoize [f]
-  `(def ~f (memoize ~f)))
 
-(enmemoize resolve)
+
+#_(def resolve (memoize resolve))
 
 (defn -main
   [config-path & args]
   (let [base-dir  (.getParent (io/file config-path))
         config (read-config config-path)
-        config (assoc config :base-dir base-dir)
         sounds (:sounds config)
+        sounds (assoc sounds :base-dir base-dir)
         final-kw (:final config)
-        final (resolve base-dir sounds final-kw)]
+        final (resolve sounds final-kw)]
     (println "duration:" (duration final))
     (save final (relative-path (episode-file-name config) base-dir)  16000)))
 
