@@ -297,21 +297,21 @@
 
 (declare resolve)
 
-(defn resolve-reduce [config f s]
-  (reduce f (map (partial resolve config) s)))
+(defn resolve-reduce [resolve-f config f s]
+  (reduce f (map (partial resolve-f config) s)))
 
-(defn append-all[config s]
-  (resolve-reduce config append s))
+(defn append-all[resolve-f config s]
+  (resolve-reduce resolve-f config append s))
 
-(defn mix-all [config s]
-  (resolve-reduce config mix s))
+(defn mix-all [resolve-f config s]
+  (resolve-reduce resolve-f config mix s))
 
 (defn resolve-list
   "Evaluate the given list as a sound source"
-  [config l]
+  [resolve-f config l]
   (let [verb (first l)
         args (rest l)
-        res (partial resolve config)
+        res (partial resolve resolve-f config)
         a (first args)
         b (second args)]
     (cond
@@ -327,23 +327,24 @@
 
 (defn resolve
   "Evalueate the given id in the config as a sound source."
-  [config id]
-  (let [result
-        (cond
-         (string? id) (read-sound-file (:base-dir config) id)
-         (keyword? id) (resolve config (get-in config [:sounds id]))
-         (map? id)  (process-sound (resolve config (:source id)) id)
-         (vector? id) (append-all config id)
-         (set? id) (mix-all config id)
-         (list? id) (resolve-list config id)
-         (nil? id) (throw (Exception. (str "Cant resolve nil")))
-         :default id)]
-    (println "**Resolve:" id "=>" result)
-    result))
+  ([config id] (resolve resolve config id))
+  ([resolve-f config id]
+   (println "resolving:" id)
+   (let [result
+         (cond
+          (string? id) (read-sound-file (:base-dir config) id)
+          (keyword? id) (resolve resolve-f config (get-in config [:sounds id]))
+          (map? id)  (process-sound (resolve resolve-f config (:source id)) id)
+          (vector? id) (append-all resolve-f config id)
+          (set? id) (mix-all resolve-f config id)
+          (list? id) (resolve-list resolve-f config id)
+          (nil? id) (throw (Exception. (str "Cant resolve nil")))
+          :default id)]
+     result)))
 
 
 
-(def resolve (memoize resolve))
+(def m-resolve (memoize resolve))
 
 (defn -main
   [config-path & args]
@@ -351,9 +352,8 @@
         config (read-config config-path)
         config (assoc config :base-dir base-dir)
         final-kw (:final config)
-        final (resolve config final-kw)
+        final (m-resolve m-resolve config final-kw)
         file (output-file-name config)]
-    (println "file:"file)
     (save final (relative-path file base-dir)  16000)))
 
 #_(-main "../t1/episode.edn")
