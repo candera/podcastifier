@@ -34,7 +34,6 @@
 (defn relative-path
   "Given a path, return it relative to `base`."
   [path base]
-  #_(println "path:" path "base:" base)
   (let [f (io/file path)]
     (if (.isAbsolute f)
       path
@@ -180,6 +179,7 @@
     s))
 
 (defn process-sound
+  "Process sound according to the instructions in config"
   [sound config]
   (let [sound (trim-sound sound config)
         sound (if (:gain config) (gain sound (:gain config)) sound)
@@ -193,7 +193,6 @@
 
 (defn read-sound-file
   [base-dir name]
-  #_(println "read sound file:" base-dir name)
   (let [sound (-> name (relative-path base-dir) read-sound)]
     sound))
 
@@ -216,7 +215,7 @@
 (defn append-music
   "Append the music to the voices with appropriate fades.
   The result has the music fading in in two steps
-  as with voices end. The two sounds overlap
+  as the voices end. The two sounds overlap
   for duration overlap."
   [voices music & {:keys [overlap fade updown] :or {overlap 20.0 fade 0.2 updown 4.0}}]
   (let [join-t (- (duration voices) overlap)
@@ -285,28 +284,31 @@
         music (fade-out bg extra)]
      (mix (->stereo(normalize fg)) bg)))
 
-(defn episode-file-name
-  [config]
-  (format "%s-%03d-%s.wav" (:show-name config) (:number config) (:label config)))
+
+(defn output-file-name
+  "Return the output file name from the :output-file value in config"
+  [{of :output-file :as config}]
+  (if (string? of)
+    of
+    (let [[fmt & args] of
+          resolved-args (map #(if (keyword? %) (% config) %) args)]
+      (apply format fmt resolved-args))))
 
 
 (declare resolve)
 
 (defn resolve-reduce [config f s]
-  (println "Resulve reduce" config)
-  (println "Res reduce" f)
-  (println "Res reduce" s)
   (reduce f (map (partial resolve config) s)))
-
 
 (defn append-all[config s]
   (resolve-reduce config append s))
 
 (defn mix-all [config s]
-  (println "mix:" s)
   (resolve-reduce config mix s))
 
-(defn resolve-list [config l]
+(defn resolve-list
+  "Evaluate the given list as a sound source"
+  [config l]
   (let [verb (first l)
         args (rest l)
         res (partial resolve config)
@@ -323,13 +325,13 @@
                (Exception.
                 (str "Don't know how to resolve verb " verb " " (class verb) " from " l))))))
 
-(defn resolve [config id]
-  #_(println "resolve id" id)
-  #_(println "resolve config:" config)
+(defn resolve
+  "Evalueate the given id in the config as a sound source."
+  [config id]
   (let [result
         (cond
          (string? id) (read-sound-file (:base-dir config) id)
-         (keyword? id) (resolve config (id config))
+         (keyword? id) (resolve config (get-in config [:sounds id]))
          (map? id)  (process-sound (resolve config (:source id)) id)
          (vector? id) (append-all config id)
          (set? id) (mix-all config id)
@@ -341,18 +343,18 @@
 
 
 
-#_(def resolve (memoize resolve))
+(def resolve (memoize resolve))
 
 (defn -main
   [config-path & args]
   (let [base-dir  (.getParent (io/file config-path))
         config (read-config config-path)
-        sounds (:sounds config)
-        sounds (assoc sounds :base-dir base-dir)
+        config (assoc config :base-dir base-dir)
         final-kw (:final config)
-        final (resolve sounds final-kw)]
-    (println "duration:" (duration final))
-    (save final (relative-path (episode-file-name config) base-dir)  16000)))
+        final (resolve config final-kw)
+        file (output-file-name config)]
+    (println "file:"file)
+    (save final (relative-path file base-dir)  16000)))
 
-(-main "../t1/episode.edn")
+#_(-main "../t1/episode.edn")
 
