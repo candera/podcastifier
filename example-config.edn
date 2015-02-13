@@ -1,25 +1,55 @@
-{:voices {:both "voices.wav"
-          :pan-amount 0.4
-          :start "00:01:20"
-          :fade-in "00:00:15"
-          :intro-music-fade "00:02:25"
-          :outro-music-start "00:05:00"
-          :end "00:05:30"}
- :music {:intro {:file "intro.mp3"
-                 :full-volume-level 1.0
-                 :full-volume-length "00:00:30"
-                 :fade-amount 0.1
-                 :fade-out "00:00:15"}
-         :outro {:file "outro.mp3"
-                 :fade-amount 0.1
-                 :fade-up "00:00:02"
-                 :full-volume-level 1.0
-                 :full-volume-length "00:00:30"
-                 :fade-out "00:00:15"}
-         :bumper {:file "bumper-music.mp3"
-                  :fade-amount 0.1
-                  :start-at "00:00:30"
-                  :fade-out "00:00:01"}}
- :bumper "bumper.wav"
- :bloops {:bumper "keypickup.wav"
-          :end "exit.wav"}}
+{:version     7
+ :output-file "podcast.wav"
+ :sounds {:interview {:source "interview.wav"
+                       :normalize true
+                       :start #duration 188.18734277
+                       :end #duration 3054.2
+                       :gain #db 3.0
+                       :pan 0.4
+                       :start-pad #duration 8.0
+                       :fade-in #duration 7.0
+                       :post-silence #duration 1.0}
+
+           :bumper-voice {:source "bumper.wav" :normalize true}
+
+           :raw-bumper (background
+                        :bumper-voice
+                        {:source "../master/sounds/crazyg.mp3" :gain #db -11 :fade-in #duration 5.0 :extra #duration 3.0}
+                        :extra #duration 5.0)
+
+           :bumper {:source :raw-bumper :fade-out 5.0}
+
+           :footer {:source "footer.wav" :normalize true}
+
+           :song {:source "../master/sounds/thumbsup.mp3" :gain #db -3.5}
+
+           :intro {:source :song :end #duration 50.0}
+
+           :outro {:source :song :tail #duration 110.0 :end-pad -0.25}
+
+           :start-bloop {:source "../master/sounds/keypickup.wav"
+                         :->stereo true
+                         :pre-silence #duration 1.0
+                         :post-silence #duration 1.0}
+
+           :end-bloop   {:source "../master/sounds/exit.wav" :pre-silence #duration 1.0  :->stereo true}
+
+           :of (duck :outro :footer :offset #duration 55.0 :fade #db -9 :updown #duration 4.0)
+
+           :iv (fade-out-music :intro
+                               :interview
+                               :overlap #duration 35.0
+                               :fade #db -9
+                               :updown #duration 4.0)
+
+           :ivob (fade-in-music :iv
+                                :of
+                                :overlap #duration 40.0
+                                :fade #db -9
+                                :updown #duration 4.0)
+
+           :podcast [:bumper :start-bloop :ivob :end-bloop]
+           }
+ :final :podcast
+ }
+
