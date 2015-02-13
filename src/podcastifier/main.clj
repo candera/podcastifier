@@ -10,27 +10,6 @@
 
 ;;; File management
 
-(def file-number (atom 0))
-
-(defn tempfile-name
-  [n]
-  (format "tempfile-%06d.wav" n))
-
-(defn new-file
-  []
-  (tempfile-name (swap! file-number inc)))
-
-(defn last-file
-  []
-  (tempfile-name @file-number))
-
-(def ^:dynamic *file-base* nil)
-
-(defn parent
-  "Given a path, return its parent."
-  [path]
-  (.getParent (io/file path)))
-
 (defn relative-path
   "Given a path, return it relative to `base`."
   [path base]
@@ -86,16 +65,6 @@
         m (int (/ s* 60))
         s** (- s* (* m 60))]
     (format "%02d:%02d:%s%2.3f" h m (if (< s** 10) "0" "") s**)))
-
-(defn add-time
-  "Sums `times`"
-  [& times]
-  (reduce + (map normalize-time times)))
-
-(defn subtract-time
-  "Subtracts time `t2` from `t1`"
-  [t1 t2]
-  (- (normalize-time t1) (normalize-time t2)))
 
 ;;; External process integration
 
@@ -341,7 +310,6 @@
           (nil? id) (throw (Exception. (str "Cant resolve nil")))
           :default id)]
      result)))
-
 
 
 (def m-resolve (memoize resolve))
