@@ -25,7 +25,7 @@ passing in the config file as the only argument:
 
 ### Configuration File
 
-Podcastifier takes a (EDN)[] specification file, containing a map.
+Podcastifier takes a (EDN)[] configuration file, containing a map.
 This map needs to have at least the following four entries:
  * :version
  * :output-file
@@ -69,8 +69,8 @@ configuration map, which makes this sort of thing possible:
 ```
 
 The `:sounds` entry is itself a map of keywords to values and defines
-the individual sounds that are processed by podcastifier. If the
-value of an `:sounds` entry is a string, podcastifier will read the
+the individual sounds that are processed by Podcastifier. If the
+value of an `:sounds` entry is a string, Podcastifier will read the
 file specified by the string. So if you have this:
 
 ````edn
@@ -87,7 +87,7 @@ from an MP3 file with the identifier `:music`.
 Aside from `:sounds`, your config file will also need a `:final`
 entry. The value of `:final` should be the ID of a sound and indicates
 what sound should be written out. Thus if you simply wanted
-podcastifier to read in `skype.wav` and write it back out
+Podcastifier to read in `skype.wav` and write it back out
 to `output.wav` you would have something like this:
 
 ````edn
@@ -114,7 +114,7 @@ string. If, on the other hand, you put a vector in as your value, perhaps like t
 ````
 
 Then the resulting sound will be all of the sound samples in the vector concatenated
-together. Thus, in the example aboce,  the sound associated with `:podcast` will
+together. Thus, in the example above,  the sound associated with `:podcast` will
 be the theme music followed immediately by the interview.
 
 A keyword, in turn, evaluates to the sound associated with that keyword, so we could
@@ -187,7 +187,7 @@ A key part of of specifying sounds as a map is that the `:source` can be any
 sound specification. Put a string in the `:source` slot and
 Podcastifier will read the sound from the given file.
 Put a map inside of your map and Podcastifier will do two layers
-of audio processling. Specify a keyword and
+of audio processing. Specify a keyword and
 Podcastifier will recursively look up the key in the `:sounds` map.
 
 Thus if you weren't happy with the gain in your podcast theme, you could do
@@ -227,11 +227,23 @@ Or a similar fade in:
                                    :updown #duration 4.0)
 ````
 
-You can also "duck" one sound over the oter like this:
+You can also "duck" one sound over the other like this:
 
 ````edn
   :voice-over (duck :music :voice :offset #duration 55.0 :fade #db -9 :updown #duration 4.0)
 ````
+
+To can also add a muted background sound, like this:
+
+````edn
+ :voice+background (background voice bg :extra #duration 7.0)
+````
+
+The `background` option will mix the two tracks together but fade the 2nd
+(background) track just after first track ends. You can specify the
+length of time that the background extends beyond the foreground
+with the `:extra` option.
+
 
 ### Bugs
 
