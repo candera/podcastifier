@@ -156,8 +156,8 @@
         sound (if (:->stereo config) (->stereo sound) sound)
         sound (if (:pan config) (pan sound (:pan config)) sound)
         sound (fade-sound sound config)
-        sound (if (:pre-silence config) (append (silence (:pre-silence config) 2) sound) sound)
-        sound (if (:post-silence config) (append sound (silence (:post-silence config) 2)) sound)]
+        sound (if (:pre-silence config) (append (silence (:pre-silence config) (channels sound)) sound) sound)
+        sound (if (:post-silence config) (append sound (silence (:post-silence config) (channels sound))) sound)]
     sound))
 
 (defn read-sound-file
